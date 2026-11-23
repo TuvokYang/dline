@@ -113,17 +113,26 @@ export const InputSection: React.FC<InputSectionProps> = ({
     } = chatState
 
     const { isAtBottom, scrollToBottomAuto } = scrollBehavior
+    const submissionKey = `${submissionScope ?? "unscoped"}:${
+        submissionIdentity ?? `draft-${currentDraft.ownerRevision ?? "unowned"}`
+    }`
+    const followTargetRef = useRef({ key: submissionKey })
+    if (followTargetRef.current.key !== submissionKey) {
+        followTargetRef.current = { key: submissionKey }
+    }
+    const followTarget = followTargetRef.current
+    const followSubmission = () => {
+        // Settings and queue acknowledgements may settle after the view changes.
+        if (followTargetRef.current === followTarget) scrollBehavior.requestFollow()
+    }
     // React cannot disable the composer between two DOM events dispatched in the
     // same tick. Claim the causal submission before the first await so a duplicate
     // event cannot dispatch the same draft, while a successor interaction remains
     // independently submitable even if the prior RPC is still settling.
     const directSubmissionsInFlightRef = useRef(new Set<string>())
     const submitDraft = async (capturedDraft?: ComposerSendDraft) => {
-        const directSubmissionKey = `${submissionScope ?? "unscoped"}:${
-            submissionIdentity ?? `draft-${currentDraft.ownerRevision ?? "unowned"}`
-        }`
-        if (directSubmissionsInFlightRef.current.has(directSubmissionKey)) return
-        directSubmissionsInFlightRef.current.add(directSubmissionKey)
+        if (directSubmissionsInFlightRef.current.has(submissionKey)) return
+        directSubmissionsInFlightRef.current.add(submissionKey)
         try {
             if (submissionScope) await flushPendingTaskSettingsRequests(submissionScope)
             const draft: InteractionDraft = capturedDraft
@@ -153,12 +162,14 @@ export const InputSection: React.FC<InputSectionProps> = ({
                 })
                 return
             }
+            // Sending is an explicit return to live work, not passive background output.
+            followSubmission()
             const settlement = await onSubmit(draft)
             if (settlement) {
                 onDraftAccepted(settlement)
             }
         } finally {
-            directSubmissionsInFlightRef.current.delete(directSubmissionKey)
+            directSubmissionsInFlightRef.current.delete(submissionKey)
         }
     }
     // A blocked send is never retained for replay. Re-enabling the composer only
@@ -251,7 +262,7 @@ export const InputSection: React.FC<InputSectionProps> = ({
             return
         }
         handedToQueueRef.current = capturedDraft.segments
-        clearAcceptedDraft(onEnqueueInput(draft, mode))
+        clearAcceptedDraft(onEnqueueInput(draft, mode), followSubmission)
     }
 
     // Every entry point — the Enter key, the send button and a resume — decides

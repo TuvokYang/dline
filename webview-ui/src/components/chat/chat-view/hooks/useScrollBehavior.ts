@@ -56,6 +56,11 @@ export function useScrollBehavior(
     }, [])
 
     // State
+    const [followRequest, setFollowRequest] = useState(0)
+    const requestFollow = useCallback(() => {
+        disableAutoScrollRef.current = false
+        setFollowRequest((revision) => revision + 1)
+    }, [])
     const [showScrollToBottom, setShowScrollToBottom] = useState(false)
     const [isAtBottom, setIsAtBottom] = useState(false)
     const [pendingScrollToMessage, setPendingScrollToMessage] = useState<number | null>(null)
@@ -511,6 +516,8 @@ export function useScrollBehavior(
         cancelProgrammaticScroll,
         scrollToBottomSmooth,
         scrollToBottomAuto,
+        followRequest,
+        requestFollow,
         scrollToMessage,
         toggleRowExpansion,
         toggleFoldExpansion,

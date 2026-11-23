@@ -210,6 +210,8 @@ function createScrollBehavior(): ScrollBehavior {
         cancelProgrammaticScroll: vi.fn(),
         scrollToBottomSmooth: vi.fn(),
         scrollToBottomAuto: vi.fn(),
+        followRequest: 0,
+        requestFollow: vi.fn(),
         scrollToMessage: vi.fn(),
         toggleRowExpansion: vi.fn(),
         toggleFoldExpansion: vi.fn(),
@@ -278,6 +280,33 @@ describe("MessagesArea sliding-window integration", () => {
         cleanup()
         vi.useRealTimers()
         vi.restoreAllMocks()
+    })
+
+    it("returns an older window to the real tail only for a new submission intent", async () => {
+        const behavior = createScrollBehavior()
+        const view = render(messagesAreaElement(behavior, mocks.initialMessages))
+        behavior.disableAutoScrollRef.current = true
+        expect(mocks.fetchMessage).not.toHaveBeenCalled()
+        const tail = createMessages(800, 200)
+        mocks.fetchMessage.mockResolvedValue({
+            taskId: "task-1",
+            taskInstanceId: mocks.taskInstanceId,
+            messages: tail,
+            startIndex: 800,
+            totalCount: 1000,
+        })
+
+        view.rerender(messagesAreaElement({ ...behavior, followRequest: 1 }, mocks.initialMessages))
+
+        await waitFor(() => expect(mocks.currentFirstItemIndex).toBe(800))
+        expect(mocks.currentMessages).toEqual(tail)
+        expect(behavior.disableAutoScrollRef.current).toBe(false)
+        const requests = mocks.fetchMessage.mock.calls.length
+        // Background renders alone must not seize a viewport the reader takes back.
+        behavior.disableAutoScrollRef.current = true
+        view.rerender(messagesAreaElement({ ...behavior, followRequest: 1 }, mocks.currentMessages))
+        expect(behavior.disableAutoScrollRef.current).toBe(true)
+        expect(mocks.fetchMessage.mock.calls.length).toBe(requests)
     })
 
     it("initializes a loaded tail at the absolute bottom without a visible retry chain", () => {

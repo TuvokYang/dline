@@ -120,6 +120,9 @@ export interface ScrollBehavior {
     cancelProgrammaticScroll: () => void
     scrollToBottomSmooth: () => void
     scrollToBottomAuto: () => void
+    /** An explicit submission asks the window owner to resume following the live tail. */
+    followRequest: number
+    requestFollow: () => void
     scrollToMessage: (messageIndex: number) => void
     toggleRowExpansion: (ts: number, origin?: RowExpansionOrigin) => void
     /** Toggles an activity fold by id; the reader takes the viewport first. */

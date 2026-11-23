@@ -872,6 +872,18 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
         [replaceMessageWindow, taskViewState, taskKey, windowGeneration],
     )
 
+    const followedRequestRef = useRef(scrollBehavior.followRequest)
+    useLayoutEffect(() => {
+        if (followedRequestRef.current === scrollBehavior.followRequest) return
+        followedRequestRef.current = scrollBehavior.followRequest
+        // Reuse edge navigation so an older, trimmed history window also returns
+        // to the real tail. Merely clearing auto-scroll only reaches its local end.
+        releaseBrowsingViewportAnchor()
+        userScrollIntentRef.current = null
+        disableAutoScrollRef.current = false
+        void jumpToEdge("bottom")
+    }, [scrollBehavior.followRequest, releaseBrowsingViewportAnchor, disableAutoScrollRef, jumpToEdge])
+
     const enterBrowsingForJump = useCallback(() => {
         userScrollIntentRef.current = null
         disableAutoScrollRef.current = true

@@ -1,10 +1,11 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { type ComponentProps, forwardRef, type ReactNode } from "react"
 import { describe, expect, it, vi } from "vitest"
 import { SemanticComposerEngine } from "@/components/chat/input/semantic-composer/engine"
 import type { ComposerSendDraft } from "@/components/chat/input/semantic-composer/send-draft"
 import type { ComposerDraft } from "@/components/chat/input/semantic-composer/useComposerDraft"
 import type { InteractionDraft } from "@/task-interaction/types"
+import { useScrollBehavior } from "../../hooks/useScrollBehavior"
 import { InputSection } from "./InputSection"
 
 // The text area captures one frozen draft per send; the same segments arrive
@@ -70,9 +71,11 @@ const draft = (text: string): InteractionDraft => ({ text, images: [], files: []
 
 /** Give any pending replay effect and its async submit chain a chance to run. */
 async function settleEffects(): Promise<void> {
-    for (let tick = 0; tick < 5; tick++) {
-        await Promise.resolve()
-    }
+    await act(async () => {
+        for (let tick = 0; tick < 5; tick++) {
+            await Promise.resolve()
+        }
+    })
 }
 
 /** A composer whose draft-changing calls are observable; the engine itself is real. */
@@ -110,7 +113,7 @@ function props(currentDraft: InteractionDraft): ComponentProps<typeof InputSecti
             restoreDraft: vi.fn(),
         },
         messageHandlers: { handleSendMessage: vi.fn() },
-        scrollBehavior: { isAtBottom: true, scrollToBottomAuto: vi.fn() },
+        scrollBehavior: { isAtBottom: true, scrollToBottomAuto: vi.fn(), followRequest: 0, requestFollow: vi.fn() },
         placeholderText: "Type a message...",
         shouldDisableFilesAndImages: false,
         imagesAllowed: true,
@@ -119,7 +122,42 @@ function props(currentDraft: InteractionDraft): ComponentProps<typeof InputSecti
     } as unknown as ComponentProps<typeof InputSection>
 }
 
+const emptyMessages: [] = []
+
+function followingInput(options: Pick<ComponentProps<typeof InputSection>, "onSubmit" | "onEnqueueInput" | "enabled">) {
+    function Fixture() {
+        const scroll = useScrollBehavior(emptyMessages, emptyMessages, emptyMessages, {}, vi.fn())
+        return (
+            <>
+                <output data-testid="follow-request">{scroll.followRequest}</output>
+                <InputSection {...props(draft("pending"))} {...options} scrollBehavior={scroll} />
+            </>
+        )
+    }
+    return render(<Fixture />)
+}
+
 describe("InputSection deferred task submission", () => {
+    it("requests live following before a direct reply RPC finishes", async () => {
+        let finish!: () => void
+        const pending = new Promise<undefined>((resolve) => {
+            finish = () => resolve(undefined)
+        })
+        followingInput({ enabled: true, onSubmit: () => pending })
+        expect(screen.getByTestId("follow-request")).toHaveTextContent("0")
+        fireEvent.click(screen.getByRole("button", { name: "Submit" }))
+        await waitFor(() => expect(screen.getByTestId("follow-request")).toHaveTextContent("1"))
+        finish()
+        await settleEffects()
+    })
+
+    it.each([true, false])("only follows a steering enqueue accepted=%s", async (accepted) => {
+        followingInput({ enabled: false, onEnqueueInput: async () => accepted })
+        fireEvent.click(screen.getByRole("button", { name: "Steer" }))
+        await settleEffects()
+        await waitFor(() => expect(screen.getByTestId("follow-request")).toHaveTextContent(accepted ? "1" : "0"))
+    })
+
     it("keeps a blocked Resume draft in the composer rather than enqueueing it", () => {
         const current = props(draft("resume with this note"))
         const onEnqueue = vi.fn(async () => true)
@@ -158,6 +196,42 @@ describe("InputSection deferred task submission", () => {
 
         releaseSettings()
         await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce())
+        expect(current.scrollBehavior.requestFollow).toHaveBeenCalledOnce()
+    })
+
+    it.each([
+        ["switching tasks", [{ scope: "task-2", identity: "interaction-1" }]],
+        ["replacing the interaction", [{ scope: "task-1", identity: "interaction-2" }]],
+        [
+            "returning to the same task",
+            [
+                { scope: "task-2", identity: "interaction-1" },
+                { scope: "task-1", identity: "interaction-1" },
+            ],
+        ],
+    ] as const)("does not follow an expired submission after %s", async (_scenario, steps) => {
+        let releaseSettings!: () => void
+        mocks.flushPendingTaskSettingsRequests.mockImplementationOnce(
+            () =>
+                new Promise<void>((resolve) => {
+                    releaseSettings = resolve
+                }),
+        )
+        const current = props(draft("pending settings"))
+        const onSubmit = vi.fn(async () => undefined)
+        const at = ({ scope, identity }: { scope: string; identity: string }) => (
+            <InputSection {...current} enabled={true} onSubmit={onSubmit} submissionIdentity={identity} submissionScope={scope} />
+        )
+        const view = render(at({ scope: "task-1", identity: "interaction-1" }))
+        fireEvent.click(screen.getByRole("button", { name: "Submit" }))
+        await waitFor(() => expect(mocks.flushPendingTaskSettingsRequests).toHaveBeenCalledWith("task-1"))
+        for (const step of steps) view.rerender(at(step))
+
+        releaseSettings()
+        await settleEffects()
+        // Input delivery keeps its existing owner; only the stale viewport intent expires.
+        expect(onSubmit).toHaveBeenCalledOnce()
+        expect(current.scrollBehavior.requestFollow).not.toHaveBeenCalled()
     })
 
     it("submits the input-owned draft instead of a stale parent draft", async () => {
