@@ -7,6 +7,7 @@ import TaskHeader from "./TaskHeader"
 const meta: Meta<typeof TaskHeader> = {
     title: "Views/Components/TaskHeader",
     component: TaskHeader,
+    args: { taskId: "storybook-task-123" },
     parameters: {
         layout: "padded",
         docs: {
@@ -206,7 +207,9 @@ export const WithFiles: Story = {
 export const LongTaskText: Story = {
     args: {
         task: createTask(
-            "Create a comprehensive e-commerce application with the following features:\n1. User authentication and authorization\n2. Product catalog with search and filtering\n3. Shopping cart functionality\n4. Checkout process with payment integration\n5. Order management system\n6. Admin dashboard for managing products and orders\n7. Responsive design for mobile and desktop\n8. Performance optimization and caching\n9. SEO optimization\n10. Analytics integration",
+            "Create a comprehensive e-commerce application with the following features:\n1. User authentication and authorization\n2. Product catalog with search and filtering\n3. Shopping cart functionality\n4. Checkout process with payment integration\n5. Order management system\n6. Admin dashboard for managing products and orders\n7. Responsive design for mobile and desktop\n8. Performance optimization and caching\n9. SEO optimization\n10. Analytics integration\n\n".repeat(
+                4,
+            ),
         ),
         tokensIn: 5200,
         tokensOut: 3100,

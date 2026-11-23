@@ -20,6 +20,7 @@ import { highlightSubmittedMessage } from "./Highlights"
 import { PromptCacheHealthBanner } from "./PromptCacheHealthBanner"
 import { TaskRateMetrics } from "./rate-metrics/TaskRateMetrics"
 import SpawnedTasksBar from "./SpawnedTasksBar"
+import { TaskHover } from "./TaskHover"
 import { TaskLockBanner } from "./TaskLockBanner"
 
 const IS_DEV = process.env.IS_DEV === '"true"'
@@ -209,9 +210,11 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
                     </div>
                     <div className="flex items-center select-none grow min-w-0 gap-1 justify-between">
                         {!isTaskExpanded && (
-                            <div className="whitespace-nowrap overflow-hidden text-ellipsis grow min-w-0">
-                                <span className="ph-no-capture text-base">{highlightedText}</span>
-                            </div>
+                            <TaskHover taskId={taskId} text={task.text}>
+                                <div className="whitespace-nowrap overflow-hidden text-ellipsis grow min-w-0">
+                                    <span className="ph-no-capture text-base">{highlightedText}</span>
+                                </div>
+                            </TaskHover>
                         )}
                     </div>
                     <div className="inline-flex items-center justify-end select-none shrink-0 min-w-0">
@@ -241,27 +244,29 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
                 {/* Expand/Collapse Task Details */}
                 {isTaskExpanded && (
                     <div className="flex flex-col break-words" key={`task-details-${taskId}:${taskViewState?.taskInstanceId}`}>
-                        <div
-                            className={cn(
-                                "ph-no-capture whitespace-pre-wrap break-words px-0.5 text-sm mt-1 relative",
-                                "max-h-[4.5rem] overflow-hidden",
-                                {
-                                    "max-h-[25vh] overflow-y-auto scroll-smooth": isHighlightedTextExpanded,
-                                    "cursor-pointer": isTextOverflowing,
-                                },
-                            )}
-                            onClick={() => isTextOverflowing && setIsHighlightedTextExpanded(true)}
-                            ref={highlightedTextRef}
-                            style={
-                                !isHighlightedTextExpanded && isTextOverflowing
-                                    ? {
-                                          WebkitMaskImage: "linear-gradient(to bottom, black 60%, transparent 100%)",
-                                          maskImage: "linear-gradient(to bottom, black 60%, transparent 100%)",
-                                      }
-                                    : undefined
-                            }>
-                            {highlightedText}
-                        </div>
+                        <TaskHover taskId={taskId} text={task.text}>
+                            <div
+                                className={cn(
+                                    "ph-no-capture whitespace-pre-wrap break-words px-0.5 text-sm mt-1 relative",
+                                    "max-h-[4.5rem] overflow-hidden",
+                                    {
+                                        "max-h-[25vh] overflow-y-auto scroll-smooth": isHighlightedTextExpanded,
+                                        "cursor-pointer": isTextOverflowing,
+                                    },
+                                )}
+                                onClick={() => isTextOverflowing && setIsHighlightedTextExpanded(true)}
+                                ref={highlightedTextRef}
+                                style={
+                                    !isHighlightedTextExpanded && isTextOverflowing
+                                        ? {
+                                              WebkitMaskImage: "linear-gradient(to bottom, black 60%, transparent 100%)",
+                                              maskImage: "linear-gradient(to bottom, black 60%, transparent 100%)",
+                                          }
+                                        : undefined
+                                }>
+                                {highlightedText}
+                            </div>
+                        </TaskHover>
 
                         {((task.images && task.images.length > 0) || (task.files && task.files.length > 0)) && (
                             <Thumbnails files={task.files ?? []} images={task.images ?? []} />

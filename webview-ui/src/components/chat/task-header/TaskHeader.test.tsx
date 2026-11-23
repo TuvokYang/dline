@@ -1,10 +1,12 @@
 import { flatMeteredPricing } from "@shared/providers/pricing-shape"
-import { fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, within } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { UiLanguageProvider } from "@/i18n/UiLanguageProvider"
 import TaskHeader from "./TaskHeader"
 import { formatTokenMetric } from "./util"
 
 const mocks = vi.hoisted(() => ({
+    expanded: false,
     setExpandTaskHeader: vi.fn(),
 }))
 
@@ -22,7 +24,7 @@ vi.mock("@context/ExtensionStateContext", () => ({
         checkpointManagerErrorMessage: undefined,
         currentTaskItem: { id: "task-1" },
         environment: "local",
-        expandTaskHeader: false,
+        expandTaskHeader: mocks.expanded,
         focusChainSettings: { enabled: false },
         mode: "act",
         navigateToSettings: vi.fn(),
@@ -54,7 +56,74 @@ const task = {
 }
 
 beforeEach(() => {
+    mocks.expanded = false
     mocks.setExpandTaskHeader.mockReset()
+})
+
+const fullText = `First line\n${"Preserve every task detail. ".repeat(120)}\n<strong>literal text</strong>\nFinal task instruction`
+
+function headerTree(language: "en" | "zh-CN", taskId?: string, text = fullText) {
+    return (
+        <UiLanguageProvider language={language}>
+            <TaskHeader
+                doesModelSupportPromptCache={false}
+                onClose={vi.fn()}
+                task={{ ...task, text }}
+                taskId={taskId}
+                tokensIn={0}
+                tokensOut={0}
+                totalCost={0}
+            />
+        </UiLanguageProvider>
+    )
+}
+
+describe("TaskHeader task details", () => {
+    it.each([false, true])("shows the exact task ID and full source text when expanded=%s", async (expanded) => {
+        mocks.expanded = expanded
+        render(headerTree("en", "canonical-task-123"))
+        fireEvent.focus(screen.getByLabelText("Task details"))
+        const details = await screen.findByRole("tooltip")
+        const values = within(details).getAllByRole("definition")
+        expect(values[0].textContent).toBe("canonical-task-123")
+        expect(values[1].textContent).toBe(fullText)
+        expect(details.querySelector("strong")).toBeNull()
+        fireEvent.click(values[1])
+        fireEvent.keyDown(values[1], { key: "Enter" })
+        expect(mocks.setExpandTaskHeader).not.toHaveBeenCalled()
+        fireEvent.click(screen.getByLabelText(expanded ? "Collapse task header" : "Expand task header"))
+        expect(mocks.setExpandTaskHeader).toHaveBeenCalledWith(!expanded)
+    })
+
+    it("updates an open preview across language and task changes without replacing the surface", async () => {
+        const view = render(headerTree("en", "canonical-task-123"))
+        fireEvent.focus(screen.getByLabelText("Task details"))
+        const details = await screen.findByRole("tooltip")
+        expect(within(details).getByText("Task ID", { selector: "dt" })).toBeInTheDocument()
+        expect(within(details).getByText("Full task text", { selector: "dt" })).toBeInTheDocument()
+
+        view.rerender(headerTree("zh-CN", "canonical-task-123"))
+        expect(screen.getByRole("tooltip")).toBe(details)
+        expect(within(details).getByText("任务 ID", { selector: "dt" })).toBeInTheDocument()
+        expect(within(details).getByText("完整任务文本", { selector: "dt" })).toBeInTheDocument()
+        expect(within(details).getAllByRole("definition")[1].textContent).toBe(fullText)
+
+        view.rerender(headerTree("en", "canonical-task-456", "The next task in full\nFinal line"))
+        expect(screen.getByRole("tooltip")).toBe(details)
+        const values = within(details).getAllByRole("definition")
+        expect(values[0].textContent).toBe("canonical-task-456")
+        expect(values[1].textContent).toBe("The next task in full\nFinal line")
+        expect(mocks.setExpandTaskHeader).not.toHaveBeenCalled()
+    })
+
+    it("does not invent an ID from the message timestamp or another task's history item", async () => {
+        render(headerTree("en"))
+        fireEvent.focus(screen.getByLabelText("Task details"))
+        const details = await screen.findByRole("tooltip")
+        const values = within(details).getAllByRole("definition")
+        expect(values[0].textContent).toBe("Not available")
+        expect(values[1].textContent).toBe(fullText)
+    })
 })
 
 describe("TaskHeader pricing", () => {

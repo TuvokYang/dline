@@ -1,6 +1,10 @@
 export const headerEn = {
     "chatInput.header.collapse": "Collapse task header",
     "chatInput.header.expand": "Expand task header",
+    "chatInput.header.details": "Task details",
+    "chatInput.header.taskId": "Task ID",
+    "chatInput.header.fullText": "Full task text",
+    "chatInput.header.idUnavailable": "Not available",
     "chatInput.header.spawned": "Spawned:",
     "chatInput.header.openTask": ({ taskId }: { taskId: string }) => `Open task: ${taskId}`,
     "chatInput.header.scrollMessage": ({ message }: { message: string }) => `Scroll to your message: ${message}`,
