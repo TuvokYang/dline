@@ -7,7 +7,9 @@ import { getAllApiKeys, resetAllStores } from "@core/storage/secrets"
 import { EmptyRequest } from "@shared/proto/dline/common"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
 import { ApiProfile, ImageGenerationSource } from "@shared/proto/dline/profile"
+import { withSearchChoice } from "@shared/providers/model-web-search"
 import { flatMeteredPricing } from "@shared/providers/pricing-shape"
+import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { PROVIDER_OPTIONS } from "@shared/providers/providers"
 import { Logger } from "@shared/services/Logger"
 import { expect } from "chai"
@@ -471,6 +473,36 @@ describe("getApiProfiles", () => {
         // lock or temp file here; on Windows that races the recursive removal with ENOTEMPTY/EBUSY.
         await fs.rm(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 })
         vi.restoreAllMocks()
+    })
+
+    it.each(["openai", "anthropic"])("reopens an explicit Search choice for an undeclared %s model", async (provider) => {
+        const registry = ModelRegistry.getInstance()
+        await registry.reload()
+        const catalog = registry.getProviderCatalog(provider)!
+        const configured = {
+            ...catalog,
+            models: { opaque: { id: "opaque", capabilities: { supportsTools: true } } },
+            defaultModelId: "opaque",
+        }
+        vi.spyOn(registry, "getProviderCatalog").mockReturnValue(configured)
+        const profile = normalizeApiProfile(
+            ApiProfile.create({
+                id: "explicit-search",
+                provider,
+                modelId: "opaque",
+                modelInfo: withSearchChoice("opaque", undefined),
+            }),
+        )
+        const storedPath = path.join(process.env.DLINE_DIR!, "data", "settings", "api_profiles.json")
+        await writeApiProfilesToFile(storedPath, [profile])
+        invalidateApiProfilesReadCache()
+        const reopened = readApiProfiles()[0]
+        expect(reopened.modelInfo?.capabilities?.tools).to.deep.equal([ServerTool.WEB_SEARCH])
+        expect(resolveProfileModelInfo(reopened, configured).capabilities?.tools).to.deep.equal([ServerTool.WEB_SEARCH])
+        expect(serializeApiProfilesForStorage([reopened])[0]).to.have.nested.property("modelInfo.capabilities.tools")
+        expect(
+            resolveProfileModelInfo(ApiProfile.create({ ...reopened, modelId: "another" }), configured).capabilities?.tools,
+        ).to.equal(undefined)
     })
 
     it("hydrates migrated provider profiles with apiKey in the returned list without storing it in api_profiles.json", async () => {

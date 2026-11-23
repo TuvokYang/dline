@@ -405,7 +405,16 @@ for (const [provider, configKey, Panel] of [
             if (provider === "openai" || provider === "openai-codex") {
                 expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).toBeChecked()
                 const info = JSON.parse(screen.getByTestId("model-info").textContent ?? "null")
-                expect(info.capabilities.thinking.effortLevels).toEqual(["none", "low", "medium", "high"])
+                expect(info.capabilities.thinking.effortLevels).toEqual([
+                    "none",
+                    "minimal",
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh",
+                    "max",
+                    "ultra",
+                ])
                 expect(info.capabilities.thinking.canDisable).toBe(true)
                 expect(screen.queryByRole("slider")).not.toBeInTheDocument()
             } else {
@@ -430,7 +439,16 @@ for (const [provider, configKey, Panel] of [
                 expect(screen.queryByRole("slider")).not.toBeInTheDocument()
                 const info = JSON.parse(screen.getByTestId("model-info").textContent ?? "null")
                 expect(info.capabilities.thinking.mode).toBe("effort")
-                expect(info.capabilities.thinking.effortLevels).toEqual(["none", "low", "medium", "high"])
+                expect(info.capabilities.thinking.effortLevels).toEqual([
+                    "none",
+                    "minimal",
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh",
+                    "max",
+                    "ultra",
+                ])
             } else {
                 expect(screen.queryByRole("checkbox", { name: "Enable Thinking" })).not.toBeInTheDocument()
             }
@@ -718,7 +736,7 @@ describe("Codex compatible inheritance", () => {
         expect(projectedModel().capabilities?.thinking).toEqual({
             supported: true,
             mode: "effort",
-            effortLevels: ["none", "low", "medium", "high"],
+            effortLevels: ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
             defaultEnabled: true,
             canDisable: true,
         })
@@ -729,9 +747,9 @@ describe("Codex compatible inheritance", () => {
         ["gpt-6.1-codex", ["low", "high", "max"], "high"],
         ["gpt-6.2-codex", ["none", "low", "medium", "high"], "high"],
         ["gpt-6.3-codex", ["none", "low", "medium", "high"], undefined],
-        ["gpt-6.1-codex-fast", ["none", "low", "medium", "high"], undefined],
-        ["gpt-7.1-codex", ["none", "low", "medium", "high"], undefined],
-        ["gpt-6.1", ["none", "low", "medium", "high"], undefined],
+        ["gpt-6.1-codex-fast", ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"], undefined],
+        ["gpt-7.1-codex", ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"], undefined],
+        ["gpt-6.1", ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"], undefined],
     ])("resolves %s only within the Codex major and exact variant", (modelId, effortLevels, defaultEffort) => {
         const profile = ApiProfile.create({ provider: "openai-codex", modelId })
         render(<OpenAiCodexProvider onUpdate={vi.fn()} profile={profile} showModelOptions />)

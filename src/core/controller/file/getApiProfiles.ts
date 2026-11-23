@@ -38,6 +38,7 @@ import {
     pickModelInfoOverride,
 } from "@shared/providers/model-info-overrides"
 import { getProviderCatalog } from "@shared/providers/model-infos"
+import { pickSearchOverride, supportsSearchOverride } from "@shared/providers/model-web-search"
 import { flatMeteredPricing, migrateModelPricing, modelPricingForWrite } from "@shared/providers/pricing-shape"
 import { PROFILE_PROVIDER_KEYS, resolveProfileCatalogKey } from "@shared/providers/profile-model-info"
 import { readProviderConfigField, withProviderConfigField } from "@shared/providers/provider-config"
@@ -591,13 +592,15 @@ function resolveRegistryModelInfo(profile: ApiProfile) {
 
 function getProfileModelInfoOverride(profile: ApiProfile) {
     const baseModelInfo = resolveRegistryModelInfo(profile)
+    const configured = !profile.modelId || profile.modelInfo?.id === profile.modelId ? profile.modelInfo : undefined
     if (!baseModelInfo) {
-        return profile.modelInfo
+        return configured
     }
-    if (!canStoreRegistryModelInfoOverrides(profile.provider)) {
-        return undefined
-    }
-    return pickModelInfoOverride(profile.modelInfo, baseModelInfo, getModelInfoOverrideFields(profile.provider))
+    const overrides = canStoreRegistryModelInfoOverrides(profile.provider)
+        ? pickModelInfoOverride(configured, baseModelInfo, getModelInfoOverrideFields(profile.provider))
+        : undefined
+    const search = supportsSearchOverride(profile.provider) ? pickSearchOverride(baseModelInfo, configured) : undefined
+    return mergeModelInfo(search, overrides)
 }
 
 function applyRegistryModelInfo(profiles: ApiProfile[]): boolean {
@@ -609,16 +612,15 @@ function applyRegistryModelInfo(profiles: ApiProfile[]): boolean {
             // modelInfo remains the authoritative editable metadata.
             continue
         }
-        if (!canStoreRegistryModelInfoOverrides(profile.provider)) {
+        if (!canStoreRegistryModelInfoOverrides(profile.provider) && !supportsSearchOverride(profile.provider)) {
             // Registry-backed non-override providers expose derived metadata to
             // runtime consumers without persisting a stale Profile snapshot.
             if (profile.modelInfo) changed = true
             profile.modelInfo = ApiProfile.fromJSON({ modelInfo: baseModelInfo }).modelInfo
             continue
         }
-        // Override-enabled providers (e.g. openai): merge registry modelInfo
-        // with any stored user overrides so the profile always carries an
-        // up-to-date snapshot.
+        // Merge only permitted overrides, including an explicit Search choice
+        // while the selected catalog model leaves hosted tools undeclared.
         const modelInfoOverride = getProfileModelInfoOverride(profile)
         const mergedModelInfo = mergeModelInfo(baseModelInfo, modelInfoOverride)
         const storedModelInfo = modelInfoToStorageJson(profile.modelInfo)

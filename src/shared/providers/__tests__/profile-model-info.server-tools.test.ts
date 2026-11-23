@@ -55,6 +55,34 @@ describe("profile server tool boundaries", () => {
         expect(effective.capabilities?.tools).toEqual([ServerTool.WEB_SEARCH])
     })
 
+    it.each(["openai", "anthropic"])("keeps an explicit Search choice for an undeclared %s catalog model", (provider) => {
+        const registry = { models: { opaque: { id: "opaque", capabilities: { supportsTools: true } } }, defaultModelId: "opaque" }
+        const profile = ApiProfile.create({
+            provider,
+            modelId: "opaque",
+            modelInfo: { id: "opaque", capabilities: { tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH] } },
+        })
+        const effective = resolveProfileModelInfo(profile, registry)
+        expect(effective.capabilities?.tools).toEqual([ServerTool.WEB_SEARCH])
+        expect(registry.models.opaque.capabilities).toEqual({ supportsTools: true })
+        expect(
+            resolveProfileModelInfo(ApiProfile.create({ ...profile, modelId: "another" }), registry).capabilities?.tools,
+        ).toBeUndefined()
+    })
+
+    it.each([
+        { tools: [] },
+        { tools: [ServerTool.WEB_FETCH] },
+    ])("does not replace an explicit catalog declaration %j with a Search choice", ({ tools }) => {
+        const profile = ApiProfile.create({
+            provider: "openai",
+            modelId: "opaque",
+            modelInfo: { id: "opaque", capabilities: { tools: [ServerTool.WEB_SEARCH] } },
+        })
+        const registry = { models: { opaque: { id: "opaque", capabilities: { tools } } }, defaultModelId: "opaque" }
+        expect(resolveProfileModelInfo(profile, registry).capabilities?.tools).toEqual(tools)
+    })
+
     it("reads the switch from the profile's own disable list", () => {
         const following = ApiProfile.create({ id: "a", provider: "anthropic", anthropic: {} })
         const switched = ApiProfile.create({

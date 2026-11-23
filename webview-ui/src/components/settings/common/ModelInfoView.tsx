@@ -141,7 +141,8 @@ export const ModelInfoView = ({
     const hasCaching = isGemini ? false : supportsPromptCache(modelInfo)
     const hasNativeTools = modelInfo.capabilities?.supportsTools === true
     const hasReasoning =
-        modelInfo.capabilities?.supportsReasoning === true || modelInfo.capabilities?.thinking?.supported === true
+        modelInfo.capabilities?.supportsReasoning !== false &&
+        (modelInfo.capabilities?.supportsReasoning === true || modelInfo.capabilities?.thinking?.supported === true)
 
     return (
         <div className="min-w-0">

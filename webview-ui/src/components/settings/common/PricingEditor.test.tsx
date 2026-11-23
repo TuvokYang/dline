@@ -71,6 +71,12 @@ const timePricing = (): ModelPricing => ({
 })
 
 describe("pricing declaration drafts", () => {
+    it.each([undefined, "flat"] as const)("hides Add tier for flat pricing with fixed shape %s", (fixedShape) => {
+        render(<PricingEditor {...props} fixedShape={fixedShape} onChange={vi.fn()} />)
+        expect(screen.queryByRole("button", { name: "Add Pricing Tier" })).not.toBeInTheDocument()
+        expect(screen.getByLabelText("Input Price ($/1M tokens)")).toHaveValue("1")
+    })
+
     it("starts unpublished slots blank and edits only the supplied price", async () => {
         let saved: ModelPricing | undefined
         render(

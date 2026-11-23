@@ -1,4 +1,4 @@
-import type { ModelCapabilities, ModelPricing, ServerTool } from "@shared/proto/dline/models/metadata"
+import { type ModelCapabilities, type ModelPricing, ServerTool } from "@shared/proto/dline/models/metadata"
 import type { ApiProfile } from "@shared/proto/dline/profile"
 import { AnthropicProviderConfig } from "@shared/proto/dline/provider/anthropic"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
@@ -10,8 +10,10 @@ import {
     updateSelectedContextWindow,
 } from "@shared/providers/effective-model-info"
 import { inheritModelInfo } from "@shared/providers/model-inheritance"
+import { resolveSearchModel, withSearchChoice } from "@shared/providers/model-web-search"
 import { hasBands } from "@shared/providers/pricing-shape"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
+import { withServerToolSwitch } from "@shared/providers/server-tool-switches"
 import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { useCallback, useId, useMemo, useState } from "react"
 import styled from "styled-components"
@@ -90,12 +92,10 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
     // capabilities, including its hosted server tools.
     const { t } = useUiTranslation()
     const customModelEnabled = pc.customModelEnabled === true
-    const registryModel = inheritModelInfo(
-        modelId,
-        anthropicModels[modelId] ?? (profile.modelInfo?.id === modelId ? profile.modelInfo : { id: modelId }),
-        anthropicModels,
-        "claude",
-    )
+    const matchingModel = profile.modelInfo?.id === modelId ? profile.modelInfo : undefined
+    const declaredModel = anthropicModels[modelId] ?? matchingModel ?? { id: modelId }
+    const searchUndeclared = declaredModel.capabilities?.tools === undefined
+    const registryModel = inheritModelInfo(modelId, resolveSearchModel(declaredModel, matchingModel), anthropicModels, "claude")
     const contextWindowTiersEnabled = customModelEnabled || Boolean(registryModel.capabilities?.contextWindowTiers?.length)
     // The 1M long-context option is enabled by default; only an explicit false disables it.
     const enableLongContext = pc.enableLongContext !== false
@@ -202,6 +202,17 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
     // stays in the registry so the switch can never erase a real capability.
     const handleDisabledServerToolsUpdate = (disabledServerTools: ServerTool[]) => {
         onUpdate({ anthropic: { ...configToUpdate(), disabledServerTools } })
+    }
+
+    const updateWebSearch = (enabled: boolean) => {
+        const current = configToUpdate()
+        onUpdate({
+            ...(enabled ? { modelInfo: withSearchChoice(modelId, matchingModel) } : {}),
+            anthropic: {
+                ...current,
+                disabledServerTools: withServerToolSwitch(current.disabledServerTools, ServerTool.WEB_SEARCH, enabled),
+            },
+        })
     }
 
     return (
@@ -330,6 +341,7 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
                             onUpdate({ anthropic: { ...configToUpdate(), pricing: undefined, pricingTiersEnabled: undefined } })
                         }
                         onPricingUpdate={handlePricingUpdate}
+                        onWebSearchUpdate={searchUndeclared ? updateWebSearch : undefined}
                         pricing={pc.pricing}
                         pricingTiersEnabled={pc.pricingTiersEnabled === true}
                         // Official models show registry tiers editable; custom models can add their own tiers.

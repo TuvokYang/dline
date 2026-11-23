@@ -356,7 +356,7 @@ describe("OpenAIProvider", () => {
 
         fireEvent.change(screen.getByRole("textbox", { name: "Model ID" }), { target: { value: "gpt-custom" } })
 
-        expect(onUpdate).toHaveBeenCalledWith({ modelId: "gpt-custom" })
+        expect(onUpdate).toHaveBeenCalledWith({ modelId: "gpt-custom", modelInfo: undefined })
     })
 
     it("refreshes the provider listing when the picker opens", async () => {
@@ -460,8 +460,36 @@ describe("OpenAIProvider", () => {
         expect(screen.getByText(compatibilityHelp)).toHaveTextContent("remote default")
         expect(screen.getByText("Prompt caching: supported")).toBeInTheDocument()
         fireEvent.click(effortSelector())
-        expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["None", "Low", "Medium", "High"])
+        expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+            "None",
+            "Minimal",
+            "Low",
+            "Medium",
+            "High",
+            "Xhigh",
+            "Max",
+            "Ultra",
+        ])
         expect(onUpdate).not.toHaveBeenCalled()
+    })
+
+    it.each([
+        { label: "Minimal", effort: "minimal" },
+        { label: "Xhigh", effort: "xhigh" },
+        { label: "Max", effort: "max" },
+        { label: "Ultra", effort: "ultra" },
+    ])("persists the compatible $effort choice without losing the tentative help", ({ label, effort }) => {
+        const onUpdate = vi.fn()
+        render(<EditableProfile initialProfile={remoteProfile()} onUpdate={onUpdate} />)
+        fireEvent.click(effortSelector())
+        fireEvent.click(screen.getByRole("option", { name: label, exact: true }))
+        expect(onUpdate).toHaveBeenLastCalledWith({
+            openai: expect.objectContaining({
+                reasoning: expect.objectContaining({ enableThinking: true, effort }),
+            }),
+        })
+        expect(effortSelector()).toHaveTextContent(label)
+        expect(screen.getByText(compatibilityHelp)).toBeInTheDocument()
     })
 
     it.each([

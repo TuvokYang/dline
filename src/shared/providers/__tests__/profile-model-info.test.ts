@@ -22,7 +22,16 @@ describe("resolveProfileModelInfo", () => {
         })
         const result = resolveProfileModelInfo(profile)
         expect(result.id).to.equal("new-unknown")
-        expect(result.capabilities?.thinking?.effortLevels).to.deep.equal(["none", "low", "medium", "high"])
+        expect(result.capabilities?.thinking?.effortLevels).to.deep.equal([
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra",
+        ])
         expect(result.capabilities?.thinking?.defaultEffort).to.equal(undefined)
         expect(result.capabilities?.thinking?.defaultEnabled).to.equal(true)
     })

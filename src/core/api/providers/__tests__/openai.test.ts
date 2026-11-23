@@ -282,7 +282,16 @@ describe("OpenAiHandler", () => {
             expect(body.reasoning).to.deep.equal(
                 apiFormat === ApiFormat.OPENAI_RESPONSES ? { effort: "high", summary: "auto" } : undefined,
             )
-            expect(handler.getModel().info.capabilities?.thinking?.effortLevels).to.deep.equal(["none", "low", "medium", "high"])
+            expect(handler.getModel().info.capabilities?.thinking?.effortLevels).to.deep.equal([
+                "none",
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max",
+                "ultra",
+            ])
         })
     })
 

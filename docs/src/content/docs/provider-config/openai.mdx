@@ -66,13 +66,23 @@ With a custom base URL, Dline sends the key only to the address you typed. Cost 
 
 When neither the selected model nor your Profile declares prompt-cache support, Dline defaults it to enabled. An explicit `false` stays disabled; cache prices do not determine this capability.
 
-For OpenAI API-key and compatible Profiles, models with no reasoning declaration show **Enable Thinking** checked by default. The compatibility choices are `None`, `Low`, `Medium`, and `High`; choose a level your endpoint supports. Leaving the effort unselected uses the endpoint's default. Selecting a level saves it in the Profile and sends the corresponding Chat Completions or Responses effort. If the endpoint rejects a choice, select another level it supports.
+For OpenAI API-key and compatible Profiles, models with no reasoning declaration show **Enable Thinking** checked by default. The compatibility choices are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`; choose a level your endpoint supports. Leaving the effort unselected uses the endpoint's default. Selecting a level saves it in the Profile. Chat Completions sends the selected value; Responses encodes `ultra` as `max`. If the endpoint rejects a choice, select another level it supports.
 
 Explicit model declarations determine the budget mode, effort list, and defaults. Models explicitly marked as not supporting reasoning hide the thinking controls; an empty effort list shows the toggle without a level selector. A user opt-out remains off unless the model declares that thinking cannot be disabled.
 
 A newly discovered GPT minor version can inherit cache and thinking declarations from the nearest older catalog entry with the same major version and exact variant. For example, `gpt-6.2-astra` can use the declared cache and effort levels of `gpt-6-astra`. This does not copy prices, context or output limits, image capabilities, hosted tools, or API formats. The selected model's declarations and your explicit capability overrides take precedence.
 
 ChatGPT Subscription uses the same limited inheritance within its own catalog, not the API-key catalog. When no usable thinking declaration exists it offers the same default-enabled compatibility choices above. Explicit model declarations still win, and an unselected effort stays unset.
+
+### Undeclared hosted Web Search
+
+In **Model Configuration**, a model whose hosted tools are undeclared can enable **Use hosted Web Search** as a compatibility attempt. It starts unchecked and is saved for the current Profile's selected model. Changing the model or Provider clears that choice. An explicitly empty tools declaration remains unavailable.
+
+Select **Responses** and enable native tool calls to use hosted Search. Global Web Tools settings, the Profile's routing mode, and its off switch still apply. If the endpoint rejects hosted Search, turn it off and use local Web Search instead.
+
+### Custom pricing
+
+With a custom base URL enabled, **Fixed rate** edits a single set of prices and has no **Add Pricing Tier** button. Select **By context size**, or a tiered rate inside **By time of day**, before adding tiers. Capability checkboxes and the capability summary use the current model and explicit Profile overrides.
 
 ### Azure OpenAI
 

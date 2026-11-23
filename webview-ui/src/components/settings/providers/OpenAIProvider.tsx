@@ -3,10 +3,12 @@ import { ApiFormat, type ModelCapabilities, type ModelPricing, ServerTool } from
 import { OpenAiProviderConfig } from "@shared/proto/dline/provider/openai"
 import { openAiEndpointToApiFormat, resolveApiFormat } from "@shared/providers/api-format"
 import { buildEffectiveModelInfo, mergeCapabilities, mergePricing } from "@shared/providers/effective-model-info"
+import { resolveSearchModel, withSearchChoice } from "@shared/providers/model-web-search"
 import { resolveOpenAIModel } from "@shared/providers/openai-model-info"
 import { DEFAULT_OPENAI_RESPONSES_STREAM_IDLE_TIMEOUT_SECONDS } from "@shared/providers/openai-stream"
 import { hasBands } from "@shared/providers/pricing-shape"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
+import { isServerToolEnabled, withServerToolSwitch } from "@shared/providers/server-tool-switches"
 import { VSCodeButton, VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { useCallback, useId, useMemo, useState } from "react"
 import { useUiTranslation } from "@/i18n/UiLanguageProvider"
@@ -93,7 +95,14 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
     const modelId = resolveProfileModelId(profile, customModelEnabled ? undefined : { defaultModelId })
     const registryModel = customModelEnabled ? undefined : models[modelId]
     const matchingModel = profile.modelInfo?.id === modelId ? profile.modelInfo : undefined
-    const baseModel = resolveOpenAIModel(modelId, matchingModel ?? registryModel ?? openAiModelInfoSaneDefaults, models)
+    const declaredModel = matchingModel ?? registryModel ?? { ...openAiModelInfoSaneDefaults, id: modelId }
+    const searchModel = resolveSearchModel(registryModel ?? declaredModel, matchingModel)
+    const baseModel = resolveOpenAIModel(
+        modelId,
+        { ...declaredModel, capabilities: { ...declaredModel.capabilities, tools: searchModel.capabilities?.tools } },
+        models,
+    )
+    const searchUndeclared = (registryModel ?? declaredModel).capabilities?.tools === undefined
     const modelInfo: ModelInfo = buildEffectiveModelInfo(modelId, baseModel, {
         capabilities: pc.capabilities,
         pricing: pc.pricing,
@@ -122,6 +131,7 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
     )
     const hostedWebSearchAvailable =
         modelInfo.capabilities?.tools?.includes(ServerTool.WEB_SEARCH) === true &&
+        isServerToolEnabled(ServerTool.WEB_SEARCH, pc.disabledServerTools) &&
         (selectedApiFormat === ApiFormat.OPENAI_RESPONSES || selectedApiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE)
     const thinking = modelInfo.capabilities?.thinking
     const thinkingSupported = thinking?.supported === true && modelInfo.capabilities?.supportsReasoning !== false
@@ -135,8 +145,7 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
         thinking?.mode === "effort" &&
         thinking.defaultEffort === undefined &&
         thinking.defaultEnabled === true &&
-        thinking.canDisable === true &&
-        thinking.effortLevels?.join(",") === "none,low,medium,high"
+        thinking.canDisable === true
     const openAiHeaders = pc.openAiHeaders ?? {}
     const headerEntries: [string, string][] = Object.entries(openAiHeaders)
 
@@ -185,6 +194,17 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
         onUpdate({ openai: { ...configToUpdate(), disabledServerTools } })
     }
 
+    const updateWebSearch = (enabled: boolean) => {
+        const current = configToUpdate()
+        onUpdate({
+            ...(enabled ? { modelInfo: withSearchChoice(modelId, matchingModel) } : {}),
+            openai: {
+                ...current,
+                disabledServerTools: withServerToolSwitch(current.disabledServerTools, ServerTool.WEB_SEARCH, enabled),
+            },
+        })
+    }
+
     const handleStreamIdleTimeoutChange = (value: string) => {
         const seconds = Number.parseInt(value, 10)
         if (!Number.isSafeInteger(seconds) || seconds <= 0) return
@@ -203,6 +223,7 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
         const nextFormats = nextModel?.apiFormats ?? CUSTOM_OPENAI_API_FORMATS
         onUpdate({
             modelId: nextModelId,
+            modelInfo: undefined,
             openai: {
                 ...configToUpdate(),
                 apiEndpoint: undefined,
@@ -252,7 +273,7 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
                                 className="w-full"
                                 id={customModelFieldId}
                                 initialValue={profile.modelId ?? ""}
-                                onChange={(value) => onUpdate({ modelId: value })}
+                                onChange={(value) => onUpdate({ modelId: value, modelInfo: undefined })}
                                 placeholder={t("settings.ui.enterModelId")}
                             />
                         </ProfileField>
@@ -336,6 +357,7 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
                             onUpdate({ openai: { ...configToUpdate(), pricing: undefined, pricingTiersEnabled: undefined } })
                         }
                         onPricingUpdate={handlePricingUpdate}
+                        onWebSearchUpdate={searchUndeclared ? updateWebSearch : undefined}
                         pricing={pc.pricing}
                         pricingTiersEnabled={pc.pricingTiersEnabled === true}
                         tiersEditable={true}

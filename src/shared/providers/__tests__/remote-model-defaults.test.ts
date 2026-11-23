@@ -57,7 +57,7 @@ describe("remote model defaults", () => {
         expect(result.capabilities?.thinking).toEqual({
             supported: true,
             mode: "effort",
-            effortLevels: ["none", "low", "medium", "high"],
+            effortLevels: ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
             defaultEnabled: true,
             canDisable: true,
         })
@@ -109,7 +109,16 @@ describe("remote model defaults", () => {
     ])("does not cross a major, variant or identity boundary for %s", (id) => {
         const result = resolveOpenAI(id)
         expect(result.capabilities?.supportsPromptCache).toBe(true)
-        expect(result.capabilities?.thinking?.effortLevels).toEqual(["none", "low", "medium", "high"])
+        expect(result.capabilities?.thinking?.effortLevels).toEqual([
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra",
+        ])
     })
 
     it("preserves the selected model's declarations and its own empty effort list", () => {

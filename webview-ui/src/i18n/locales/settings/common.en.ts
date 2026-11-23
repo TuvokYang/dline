@@ -35,6 +35,7 @@ export const en = {
     "settings.ui.modelConfiguration": "Model Configuration",
     "settings.ui.supportsImages": "Supports Images",
     "settings.ui.hostedSearch": "Use hosted Web Search",
+    "settings.ui.tryHostedSearch": "Use hosted Web Search (undeclared; try for this model)",
     "settings.ui.noHostedSearch": "Use hosted Web Search (not offered by this model)",
     "settings.ui.hostedFetch": "Use hosted Web Fetch",
     "settings.ui.noHostedFetch": "Use hosted Web Fetch (not offered by this model)",
