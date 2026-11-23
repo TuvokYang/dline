@@ -1,5 +1,5 @@
 import React from "react"
-import GitHubIcon from "@/assets/GitHubIcon"
+import SocialLinks from "@/components/common/SocialLinks"
 import WhatsNewItems from "@/components/common/WhatsNewItems"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { DLINE_REPOSITORY_URL } from "@/config/source-links"
@@ -42,17 +42,6 @@ export const WhatsNewModal: React.FC<WhatsNewModalProps> = ({ open, onClose, ver
 
                     {/* Repository Section */}
                     <div className="flex flex-col items-center gap-3 mt-4 pt-4 border-t border-[var(--vscode-widget-border)]">
-                        <div className="flex items-center gap-4">
-                            <a
-                                aria-label={t("shell.whatsNew.starAria")}
-                                className="text-[var(--vscode-foreground)] hover:text-[var(--vscode-textLink-activeForeground)] transition-colors"
-                                href={DLINE_REPOSITORY_URL}
-                                rel="noopener noreferrer"
-                                target="_blank">
-                                <GitHubIcon />
-                            </a>
-                        </div>
-
                         {/* GitHub Star CTA */}
                         <p className="text-sm text-center" style={{ color: "var(--vscode-descriptionForeground)" }}>
                             <UiText
@@ -70,6 +59,7 @@ export const WhatsNewModal: React.FC<WhatsNewModalProps> = ({ open, onClose, ver
                                 text={t("shell.whatsNew.star")}
                             />
                         </p>
+                        <SocialLinks githubLabel={t("shell.whatsNew.starAria")} />
                     </div>
                 </div>
             </DialogContent>

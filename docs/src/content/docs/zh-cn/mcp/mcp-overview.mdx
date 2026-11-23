@@ -7,6 +7,12 @@ import { Aside } from "@astrojs/starlight/components"
 
 MCP（Model Context Protocol）让 Dline 通过 MCP 服务器使用外部工具、资源和提示词。服务器可以是本机进程（STDIO），也可以是远程端点（Streamable HTTP 或 SSE）。
 
+## 演示
+
+这段录屏展示 Dline 调用本地 `release-tools` MCP 服务器读取项目的发布清单：查看服务器的工具列表、提交任务、请求用户批准，并显示服务器返回的清单。
+
+![Dline 查看 release-tools 服务器，为 read_release_checklist 请求用户批准，并显示本地 MCP 服务器返回的发布清单](@docs-assets/ui/docs-mcp.gif)
+
 ## 打开 MCP 设置
 
 点击 Dline 面板标题栏中的 **MCP Servers** 按钮。视图包含三个标签：

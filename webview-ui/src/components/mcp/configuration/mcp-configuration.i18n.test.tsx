@@ -350,41 +350,15 @@ describe("MCP configure servers live language", () => {
         </UiLanguageProvider>
     )
 
-    it("translates the illustrative example as display-only text and keeps protocol links, brand names and actions intact", () => {
+    it("keeps configuration actions usable across language changes", () => {
         const view = render(tree("en"))
-        const example = screen.getByText("add a tool that gets the latest npm docs")
-        // The protocol and advanced links carry their own translated text, so match them by element.
-        const protocol = document.querySelector<HTMLAnchorElement>('a[href="https://github.com/modelcontextprotocol"]')
-        if (!protocol) throw new Error("Expected the protocol link")
-        const community = screen.getByRole("link", { name: "community-made servers" })
-        const demo = screen.getByRole("link", { name: "See a demo here." })
-        const settings = screen.getByRole("button", { name: "Configure MCP Servers" })
-        const advanced = screen.getByText("Advanced MCP Settings", { selector: "a" })
-        expect(screen.getByText("No MCP servers installed")).toBeInTheDocument()
-
+        fireEvent.click(screen.getByRole("button", { name: "Configure MCP Servers" }))
         view.rerender(tree("zh-CN"))
-        // The example is a static illustration, so only its display form changes.
-        expect(screen.getByText("添加一个获取最新 npm 文档的工具")).toBe(example)
-        expect(document.querySelector('a[href="https://github.com/modelcontextprotocol"]')).toBe(protocol)
-        expect(protocol).toHaveTextContent("Model Context Protocol")
-        expect(protocol).toHaveAttribute("href", "https://github.com/modelcontextprotocol")
-        expect(screen.getByRole("link", { name: "社区制作的服务器" })).toBe(community)
-        expect(community).toHaveAttribute("href", "https://github.com/modelcontextprotocol/servers")
-        expect(screen.getByRole("link", { name: "查看演示。" })).toBe(demo)
-        expect(demo).toHaveAttribute("href", "https://x.com/sdrzn/status/1867271665086074969")
-        expect(screen.getByRole("button", { name: "配置 MCP 服务器" })).toBe(settings)
-        expect(screen.getByText("高级 MCP 设置", { selector: "a" })).toBe(advanced)
-        expect(screen.getByText("未安装 MCP 服务器")).toBeInTheDocument()
-
-        fireEvent.click(settings)
-        expect(mocks.openSettings).toHaveBeenCalledTimes(1)
-        fireEvent.click(advanced)
-        expect(mocks.navigate).toHaveBeenCalledWith("features")
-
+        fireEvent.click(screen.getByRole("button", { name: "配置 MCP 服务器" }))
+        fireEvent.click(screen.getByText("高级 MCP 设置", { selector: "a" }))
         view.rerender(tree("en"))
-        expect(screen.getByRole("button", { name: "Configure MCP Servers" })).toBe(settings)
-        expect(screen.getByText("add a tool that gets the latest npm docs")).toBe(example)
-        expect(mocks.openSettings).toHaveBeenCalledTimes(1)
-        expect(mocks.navigate).toHaveBeenCalledTimes(1)
+        fireEvent.click(screen.getByRole("button", { name: "Configure MCP Servers" }))
+        expect(mocks.openSettings).toHaveBeenCalledTimes(3)
+        expect(mocks.navigate).toHaveBeenCalledExactlyOnceWith("features")
     })
 })

@@ -61,3 +61,5 @@ tests/**/cache
 # Keep documentation source GIF assets tracked.
 !/assets/docs/ui/docs-parallel-tasks.gif
 !/assets/docs/ui/docs-parallel-tasks-light.gif
+!/assets/docs/ui/docs-mcp.gif
+!/assets/docs/ui/docs-mcp-light.gif

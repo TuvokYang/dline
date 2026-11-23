@@ -1,6 +1,7 @@
 import { ExportRuntimeTelemetryBundleRequest } from "@shared/proto/index.dline"
 import { VSCodeButton, VSCodeCheckbox, VSCodeLink } from "@vscode/webview-ui-toolkit/react"
 import { useState } from "react"
+import SocialLinks from "@/components/common/SocialLinks"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { useUiTranslation } from "@/i18n/UiLanguageProvider"
@@ -224,6 +225,7 @@ const AboutSection = ({ version, renderSectionHeader }: AboutSectionProps) => {
                     <ReportingConsent />
                     <SupportTelemetryStatus />
                     {isDiagnosticsEnabled && <DiagnosticBundleExport />}
+                    <SocialLinks />
                 </div>
             </Section>
         </div>
