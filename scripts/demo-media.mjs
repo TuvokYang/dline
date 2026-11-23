@@ -35,13 +35,10 @@ const GIF_ENCODING_PROFILES = [
     { name: "compact", dither: 0.25, interFrameMaxError: 8, interPaletteMaxError: 6 },
 ]
 /**
- * How much the area outside the focus ring is darkened.
- *
- * 0.45 left the dimmed region and the focus close enough that a 256-colour GIF quantised them into
- * the same bands: the ring sat on the composer while the surrounding editor and panel still read as
- * lit, so the shot looked like the box pointed at the wrong component. 0.72 separates the two.
+ * Keep surrounding text readable in both themes. The cut-out and blue ring convey
+ * focus without relying on a heavy black mask over the rest of the interface.
  */
-const SPOTLIGHT_DIM_OPACITY = 0.72
+const SPOTLIGHT_DIM_OPACITY = 0.2
 const SPOTLIGHT_PADDING = 6
 const SPOTLIGHT_RADIUS = 6
 const SPOTLIGHT_RING_COLOR = "#3794ff"

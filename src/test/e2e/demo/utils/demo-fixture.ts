@@ -79,6 +79,7 @@ interface DemoRecordingState {
 }
 
 interface DemoFixtures {
+    supportExtensions: string[]
     _demoRecordingState: DemoRecordingState
     _demoLayout: void
     pace: (milliseconds?: number) => Promise<void>
@@ -206,11 +207,21 @@ async function dismissVSCodeNotifications(page: Page): Promise<void> {
 
 export const demo = e2e.extend<DemoFixtures & DemoThemeOptions>({
     demoTheme: ["dark", { option: true }],
+    supportExtensions: [[], { option: true }],
     _demoRecordingState: async ({}, use) => {
         await use({})
     },
     app: async (
-        { demoTheme, openVSCode, userDataDir, workspaceType, workspaceDir, multiRootWorkspaceDir, _demoRecordingState },
+        {
+            demoTheme,
+            supportExtensions,
+            openVSCode,
+            userDataDir,
+            workspaceType,
+            workspaceDir,
+            multiRootWorkspaceDir,
+            _demoRecordingState,
+        },
         use,
     ) => {
         const workspacePath = workspaceType === "single" ? workspaceDir : multiRootWorkspaceDir
@@ -218,6 +229,7 @@ export const demo = e2e.extend<DemoFixtures & DemoThemeOptions>({
         const app = await openVSCode(workspacePath, undefined, {
             windowSize: DEMO_VIEWPORT,
             forceDeviceScaleFactor: 1,
+            extensionPaths: supportExtensions,
         })
         const page = await app.firstWindow()
         await app.evaluate(({ BrowserWindow }, size) => {

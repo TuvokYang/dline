@@ -38,7 +38,7 @@ const host = vi.hoisted(() => {
 vi.mock("vscode", () => ({
     ...host,
     Uri: {
-        file: (fsPath: string) => ({ fsPath, scheme: "file" }),
+        file: (fsPath: string) => ({ fsPath, scheme: "file", authority: "", query: "", fragment: "" }),
         parse: (value: string) => ({ with: (changes: object) => ({ value, ...changes }) }),
     },
 }))
@@ -65,8 +65,14 @@ class TestDiff extends VscodeDiffViewProvider {
     }
 }
 
-function createEditor(file: string, text: string): TextEditor {
-    return { document: { uri: { fsPath: file }, lineCount: 1, getText: () => text } } as TextEditor
+function createEditor(file: string, text: string, identity: Partial<Uri> = {}): TextEditor {
+    return {
+        document: {
+            uri: { fsPath: file, scheme: "file", authority: "", query: "", fragment: "", ...identity },
+            lineCount: 1,
+            getText: () => text,
+        },
+    } as TextEditor
 }
 
 function showEditors(editors: TextEditor[]) {
@@ -117,6 +123,40 @@ describe("diff editor ownership", () => {
         const result = openResult(new TestDiff("/workspace/a.txt"))
         await vi.advanceTimersByTimeAsync(10_000)
         await expect(result).resolves.toBe("already visible")
+    })
+
+    it.each([
+        { name: "notebook cell", identity: { scheme: "vscode-notebook-cell", fragment: "ch0000000" } },
+        { name: "historical revision", identity: { scheme: "git", query: "ref=HEAD" } },
+        { name: "different authority", identity: { authority: "other-host" } },
+        { name: "different query", identity: { query: "version=previous" } },
+        { name: "different fragment", identity: { fragment: "cell-1" } },
+    ])("ignores a same-path $name when binding the modified document", async ({ identity }) => {
+        host.commands.executeCommand.mockImplementation(async (_command: string, _original: Uri, modified: Uri) => {
+            showEditors([
+                createEditor(modified.fsPath, "unrelated document", identity),
+                createEditor(modified.fsPath, "actual file content"),
+            ])
+        })
+        const result = openResult(new TestDiff("/workspace/report.ipynb"))
+        await vi.advanceTimersByTimeAsync(0)
+        await expect(result).resolves.toBe("actual file content")
+    })
+
+    it("waits for the file editor when only its notebook cell is visible", async () => {
+        const result = openResult(new TestDiff("/workspace/report.ipynb"))
+        await vi.advanceTimersByTimeAsync(0)
+        showEditors([createEditor("/workspace/report.ipynb", "cell source", { scheme: "vscode-notebook-cell" })])
+        await vi.advanceTimersByTimeAsync(0)
+        showEditors([createEditor("/workspace/report.ipynb", "complete notebook JSON")])
+        await expect(result).resolves.toBe("complete notebook JSON")
+    })
+
+    it.skipIf(process.platform !== "win32")("preserves case-insensitive Windows file matching", async () => {
+        const result = openResult(new TestDiff("C:\\Workspace\\Report.ipynb"))
+        await vi.advanceTimersByTimeAsync(0)
+        showEditors([createEditor("c:\\workspace\\report.ipynb", "Windows file content")])
+        await expect(result).resolves.toBe("Windows file content")
     })
 
     it("keeps concurrent diff results attached to their own modified document", async () => {
