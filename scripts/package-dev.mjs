@@ -20,7 +20,6 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { withSignalSafeCleanup } from "./signal-safe-cleanup.mjs"
-import { UNRELEASED_SECTION } from "./vsix-changelog.mjs"
 import { packageVsix } from "./vsix-packager.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
@@ -37,6 +36,9 @@ const PACKAGE_JSON_PATH = path.join(PROJECT_ROOT, "package.json")
  * pattern does not change.
  */
 const RELEASE_TAG_PATTERN = /^(?:dev-)?v(\d+\.\d+\.\d+)$/
+
+/** Selector for the single section the maintained notes currently hold. */
+const CURRENT_SECTION = "current"
 
 /**
  * Get short git hash of current HEAD.
@@ -82,14 +84,15 @@ function getExactTag() {
  * A development package keeps its own version strategy (the packaged manifest
  * version may carry a hash suffix), so the notes are separate from it: a formal
  * version tag, production `vX.Y.Z` or pre-release `dev-vX.Y.Z`, names the
- * released section, while every untagged or non-release commit has no released
- * version yet and shows the rolling section.
+ * released section. Any other commit documents whatever section the maintained
+ * notes currently hold: `Unreleased` during development, or the frozen candidate
+ * between version preparation and publication.
  *
  * @param {string|null} tag Exact tag at HEAD.
  * @returns {string}
  */
 function selectChangelogSection(tag) {
-    return tag?.match(RELEASE_TAG_PATTERN)?.[1] ?? UNRELEASED_SECTION
+    return tag?.match(RELEASE_TAG_PATTERN)?.[1] ?? CURRENT_SECTION
 }
 
 /**
