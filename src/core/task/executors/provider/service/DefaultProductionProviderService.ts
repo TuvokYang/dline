@@ -1,6 +1,7 @@
 import { createIdentityFactory, type IdentityFactory } from "@core/api/transform/block-identity"
 import type { ApiStreamChunk, ApiStreamServerToolChunk, ApiStreamToolCallsChunk } from "@core/api/transform/stream"
 import { createStreamNormalizer, normalizeApiStream } from "@core/api/transform/stream-identity-normalizer"
+import { createZaiToolMarkup, type ZaiToolMarkupOptions } from "@core/api/transform/zai-format"
 import { declaredAnthropicHostedToolNames } from "@core/api/utils/messages_api_support"
 import { parseAssistantMessage, type ToolUse } from "@core/assistant-message"
 import { isDeterministicToolPairingError } from "@core/context/context-management/compaction-retryability"
@@ -321,6 +322,21 @@ export class DefaultProductionProviderService implements ProductionProviderServi
         if (!prepared) return
         const turn = new TurnRequest(prepared, { ...input.draft, turnId: prepared.turnId })
         const transientId = `provider:${prepared.turnId}`
+        // A GLM model served by an OpenAI-compatible gateway can write its call as
+        // text instead of returning a native tool call. The reply is parsed from
+        // that dialect restated in Dline's markup; history keeps what it sent.
+        let replyModelId = turn.request.api.getModel().id
+        let translateReply = createZaiToolMarkup(replyModelId)
+        // The task can replace its handler mid-turn, and the replacement may
+        // serve another model, so the dialect follows the model that answered.
+        const replyMarkup = (value: string, options?: ZaiToolMarkupOptions): string => {
+            const modelId = turn.request.api.getModel().id
+            if (modelId !== replyModelId) {
+                replyModelId = modelId
+                translateReply = createZaiToolMarkup(modelId)
+            }
+            return translateReply(value, options)
+        }
         let text = ""
         // What the chat shows of `text` so far; its tool markup is drawn as cards instead.
         let prose = ""
@@ -380,7 +396,9 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                                 break
                             case "text": {
                                 text += chunk.text
-                                const frame = partialParse.time("xml", () => xmlPreview.read(text))
+                                const frame = partialParse.time("xml", () =>
+                                    xmlPreview.read(replyMarkup(text, { holdOpenCall: true })),
+                                )
                                 prose = frame.prose
                                 // The prose first, so its row is opened above the cards of the calls it introduces.
                                 yield { kind: "partial", transientId, text: prose, replyRows }
@@ -537,7 +555,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
             const reasoningContent: ClineAssistantContent[] = [...reasoning.getRedactedThinking()]
             const thinking = reasoning.getCurrentReasoning()
             if (thinking) reasoningContent.push(thinking)
-            const interrupted = interruptedTurn(reasoningContent, reasoningText, assistantProse(text))
+            const interrupted = interruptedTurn(reasoningContent, reasoningText, assistantProse(replyMarkup(text)))
             if (interrupted) yield { kind: "interrupted", transientId, ...interrupted }
             return
         }
@@ -551,10 +569,12 @@ export class DefaultProductionProviderService implements ProductionProviderServi
         // described its tools as markup (Claude Code does); those calls are
         // the model's actual reply, so dropping them would lose the turn.
         const request = turn.request
+        // The reply is parsed from the model's dialect, while history keeps what it sent.
+        const replyText = replyMarkup(text)
         const materialized =
             request.nativeTools || nativeTools.size > 0
-                ? this.materializeNativeTools(nativeTools, text, xmlPreview)
-                : this.materializeXmlTools(text, xmlPreview)
+                ? this.materializeNativeTools(nativeTools, replyText, xmlPreview)
+                : this.materializeXmlTools(replyText, xmlPreview)
         // The provider opens its reply with the results of calls an earlier reply
         // deferred, and only accepts the next request when the turn keeps them first.
         const hostedTurn = splitResumedHostedResults(hostedToolBlocks)
@@ -881,23 +901,44 @@ export class DefaultProductionProviderService implements ProductionProviderServi
         preview: XmlToolPreview,
     ): { text: string; tools: ToolUse[] } {
         const written = this.materializeXmlTools(text, preview)
+        // A gateway can return a call natively and leave the same call in the
+        // text. Running both would execute it twice, so a text copy gives way to
+        // the native call in the place the reply wrote it: dropping it and
+        // appending the native one would reorder calls that depend on each other.
+        const nativeCalls = new Map<string, PendingNativeTool>()
+        for (const tool of tools.values()) {
+            if (tool.name.length === 0) continue
+            const key = duplicateCallKey(tool.name, tool.arguments)
+            if (!nativeCalls.has(key)) nativeCalls.set(key, tool)
+        }
+        const merged: ToolUse[] = []
+        const placed = new Set<string>()
+        for (const tool of written.tools) {
+            const key = duplicateCallKey(tool.name, tool.params)
+            const native = nativeCalls.get(key)
+            if (!native) {
+                merged.push(tool)
+                continue
+            }
+            if (placed.has(key)) continue
+            placed.add(key)
+            nativeCalls.delete(key)
+            merged.push(this.nativeToolUse(native))
+        }
+        for (const tool of nativeCalls.values()) merged.push(this.nativeToolUse(tool))
+        return { text: written.text, tools: merged }
+    }
+
+    private nativeToolUse(tool: PendingNativeTool): ToolUse {
         return {
-            text: written.text,
-            tools: [
-                ...written.tools,
-                ...[...tools.values()].map(
-                    (tool): ToolUse => ({
-                        type: "tool_use",
-                        ...materializeNativeToolCall(tool.name, tool.arguments, this.options.resolveMcpTool),
-                        partial: false,
-                        ts: tool.presentationId,
-                        isNativeToolCall: true,
-                        function_id: tool.functionId,
-                        dline_tid: tool.dlineTid,
-                        ...(tool.signature === undefined ? {} : { signature: tool.signature }),
-                    }),
-                ),
-            ],
+            type: "tool_use",
+            ...materializeNativeToolCall(tool.name, tool.arguments, this.options.resolveMcpTool),
+            partial: false,
+            ts: tool.presentationId,
+            isNativeToolCall: true,
+            function_id: tool.functionId,
+            dline_tid: tool.dlineTid,
+            ...(tool.signature === undefined ? {} : { signature: tool.signature }),
         }
     }
 
@@ -970,5 +1011,66 @@ export class DefaultProductionProviderService implements ProductionProviderServi
             input: tool.params,
             ...(tool.signature === undefined ? {} : { signature: tool.signature }),
         }
+    }
+}
+
+/**
+ * Identify a call by name and argument values, for dropping a text copy of a
+ * call the provider already returned natively.
+ *
+ * Scalars compare as text so a numeric native argument and the same argument
+ * written as markup still match. A nested value compares by canonical JSON:
+ * `String(value)` would flatten every object to `[object Object]` and let a
+ * repeated structured call run twice. Unreadable arguments fall back to their
+ * raw text, which only prevents a match rather than inventing one.
+ */
+function duplicateCallKey(name: string, argumentsValue: unknown): string {
+    const parsed = parseToolArguments(argumentsValue)
+    if (parsed === undefined) return `${name}:${typeof argumentsValue === "string" ? argumentsValue : ""}`
+    const entries = Object.keys(parsed)
+        .sort()
+        .map((key) => [key, canonicalValue(parsed[key])])
+    return `${name}:${JSON.stringify(entries)}`
+}
+
+function canonicalValue(value: unknown): string {
+    if (value !== null && typeof value === "object") return JSON.stringify(sortKeys(value))
+    const nested = typeof value === "string" ? parseNestedJson(value) : undefined
+    return nested === undefined ? String(value) : JSON.stringify(sortKeys(nested))
+}
+
+function parseNestedJson(value: string): object | undefined {
+    const trimmed = value.trim()
+    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return undefined
+    try {
+        const parsed: unknown = JSON.parse(trimmed)
+        return parsed !== null && typeof parsed === "object" ? parsed : undefined
+    } catch {
+        return undefined
+    }
+}
+
+function sortKeys(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(sortKeys)
+    if (value === null || typeof value !== "object") return value
+    const record = value as Record<string, unknown>
+    return Object.fromEntries(
+        Object.keys(record)
+            .sort()
+            .map((key): [string, unknown] => [key, sortKeys(record[key])]),
+    )
+}
+
+function parseToolArguments(argumentsValue: unknown): Record<string, unknown> | undefined {
+    if (typeof argumentsValue !== "string") {
+        return argumentsValue !== null && typeof argumentsValue === "object"
+            ? (argumentsValue as Record<string, unknown>)
+            : undefined
+    }
+    try {
+        const parsed: unknown = JSON.parse(argumentsValue)
+        return parsed !== null && typeof parsed === "object" ? (parsed as Record<string, unknown>) : undefined
+    } catch {
+        return undefined
     }
 }
