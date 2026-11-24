@@ -190,6 +190,9 @@ await withSignalSafeCleanup(async (cleanups) => {
         console.log(`[package-dev] Modified version: ${originalVersion} → ${pkg.version}`)
     }
 
+    // The Webview build reads this to name the packaged build in What's New.
+    process.env.DLINE_PACKAGING_VERSION = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, "utf-8")).version
+
     // 1. Run the same validation and Webview build as vscode:prepublish,
     // then produce a dev extension bundle with IS_DEV=true and source maps.
     console.log("[package-dev] Building extension in dev mode...")

@@ -1,7 +1,13 @@
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { describe, expect, it } from "vitest"
-import { parseWhatsNew, parseWhatsNewEditions, UNRELEASED_SECTION, WHATS_NEW_SOURCE } from "../../vite-whats-new"
+import {
+    applyPackagingVersion,
+    parseWhatsNew,
+    parseWhatsNewEditions,
+    UNRELEASED_SECTION,
+    WHATS_NEW_SOURCE,
+} from "../../vite-whats-new"
 
 const CHINESE_SOURCE = WHATS_NEW_SOURCE.replace(/WHATS_NEW_en\.md$/, "WHATS_NEW.md")
 const PACKAGE_MANIFEST = resolve(__dirname, "../../../package.json")
@@ -62,6 +68,21 @@ describe("parseWhatsNew", () => {
         const release = parse("## Unreleased\n- item\n")
         expect(release.version).toBe(UNRELEASED_SECTION)
         expect(release.items).toHaveLength(1)
+    })
+
+    it("names an unreleased section with the packaged version", () => {
+        const release = parse("## Unreleased\n- item\n")
+        expect(applyPackagingVersion(release, "0.14.3-abc1234").version).toBe("0.14.3-abc1234")
+    })
+
+    it("keeps a frozen section under its own version", () => {
+        const release = parse("## 1.2.0\n- item\n")
+        expect(applyPackagingVersion(release, "9.9.9").version).toBe("1.2.0")
+    })
+
+    it("keeps the unreleased version when no packaged version is provided", () => {
+        const release = parse("## Unreleased\n- item\n")
+        expect(applyPackagingVersion(release, undefined).version).toBe(UNRELEASED_SECTION)
     })
 
     it.each([
