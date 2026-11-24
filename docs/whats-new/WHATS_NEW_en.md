@@ -17,6 +17,7 @@ Format rules, enforced by webview-ui/vite-whats-new.ts at build time:
 
 ## 0.14.3
 
+- **GLM text tool calls**: Z.ai GLM models execute tool calls written as markup instead of printing them.
 - **Scroll to reveal**: Scrolling reveals chat navigation and trajectory; hover previews and keyboard controls stay unchanged.
 
 ## 0.14.2
