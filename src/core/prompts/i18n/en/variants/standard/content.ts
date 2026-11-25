@@ -100,7 +100,7 @@ The current mode is specified in \`environment_details\` and is authoritative. D
 export const STANDARD_ACT_USER_DECISIONS = `
 - Interrupt the user only for:
   - major decisions the request has not settled: public API or protocol contracts, user-visible behavior, persisted data or migrations, and major architecture boundaries;
-  - authorization of dangerous or external operations: merge, push, rebase, deployment, publication, deleting user data, installing dependencies, and other actions that are hard to reverse or reach beyond the workspace.`
+  - authorization of dangerous or external operations: merge, push, rebase, deployment, publication, deleting user data outside the project, and other actions that are hard to reverse or reach beyond the workspace. Project-internal operations required by the work, including installing dependencies and irreversible file operations, do not require interrupting while workspace recovery is available (a git repository, or checkpoints enabled as reported in the Workspace Recovery section of environment_details).`
 
 export const STANDARD_ACT_USER_DECISIONS_YOLO = `
 - Asking is not available in this session: settle major decisions yourself within the authorized scope, report each one with its rationale, and do not perform dangerous or external operations, such as merge, push, deployment, or deleting user data, that the user has not requested.`

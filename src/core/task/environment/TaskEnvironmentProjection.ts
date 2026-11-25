@@ -141,6 +141,7 @@ export class TaskEnvironmentProjection {
         details += this.backgroundSection(buildOptions.preview === true)
         details += this.recentlyModifiedFilesSection(buildOptions.preview === true)
         details += currentTimeSection()
+        details += this.workspaceRecoverySection()
         if (includeFileDetails) details += await this.fileDetailsSection()
         details += this.contextUsageSection(effectiveApi)
         details += this.modeSection(effectiveMode)
@@ -211,6 +212,15 @@ export class TaskEnvironmentProjection {
         if (!preview) this.pendingRecentlyModifiedFiles = snapshot
         if (snapshot.files.length === 0) return ""
         return `\n\n# Recently Modified Files\nThese files have been modified since you last accessed them (file was just edited so you may need to re-read it before editing):${snapshot.files.map((file) => `\n${file}`).join("")}`
+    }
+
+    /**
+     * Reports whether task checkpoints can restore workspace file states, so the
+     * model can treat covered project-internal operations as recoverable work.
+     */
+    private workspaceRecoverySection(): string {
+        const enabled = this.options.workspace.stateManager.getGlobalSettingsKey("enableCheckpointsSetting") !== false
+        return `\n\n# Workspace Recovery\nCheckpoints: ${enabled ? "enabled" : "disabled"}`
     }
 
     private async fileDetailsSection(): Promise<string> {
