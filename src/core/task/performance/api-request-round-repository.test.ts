@@ -181,6 +181,114 @@ describe("TaskApiRequestRoundRepository", () => {
         expect(snapshot.find(({ roundId }) => roundId.endsWith(":0619"))?.revision).toBe(1)
     })
 
+    it("answers a window wider than the page size from one query", async () => {
+        const repository = new TaskApiRequestRoundRepository({ taskId: "task-a", location: path.join(root, "one-query.db") })
+        repositories.push(repository)
+        const rounds = Array.from({ length: 2_048 }, (_, index) => {
+            const completedAtMs = 10_000 + index
+            const roundId = `task-a:request-a:provider:${index.toString().padStart(5, "0")}`
+            return [round(roundId, 0, completedAtMs), round(roundId, 1, completedAtMs)]
+        }).flat()
+        await repository.append(rounds)
+
+        const snapshot = await repository.readRangeSnapshot({ startMs: 0, endMs: 20_000, pageSize: 128 })
+
+        expect(snapshot).toHaveLength(2_048)
+        expect(snapshot.every(({ revision }) => revision === 1)).toBe(true)
+    })
+
+    it("keeps every round's latest revision beyond one page of rows", async () => {
+        const repository = new TaskApiRequestRoundRepository({ taskId: "task-a", location: path.join(root, "latest.db") })
+        repositories.push(repository)
+        const rounds = Array.from({ length: 1_500 }, (_, index) => {
+            const completedAtMs = 10_000 + index
+            const roundId = `task-a:request-a:provider:${index.toString().padStart(5, "0")}`
+            return [round(roundId, 0, completedAtMs), round(roundId, 1, completedAtMs), round(roundId, 2, completedAtMs)]
+        }).flat()
+        await repository.append(rounds)
+
+        const snapshot = await repository.readRangeSnapshot({ startMs: 0, endMs: 20_000, pageSize: 128 })
+
+        expect(snapshot).toHaveLength(1_500)
+        expect(new Set(snapshot.map(({ roundId }) => roundId)).size).toBe(1_500)
+        expect(snapshot.every(({ revision }) => revision === 2)).toBe(true)
+    })
+
+    it("bounds a window holding more rounds than maxRounds", async () => {
+        const repository = new TaskApiRequestRoundRepository({ taskId: "task-a", location: path.join(root, "cap.db") })
+        repositories.push(repository)
+        const total = 2_000
+        await repository.append(
+            Array.from({ length: total }, (_, index) =>
+                round(`task-a:request-a:provider:${index.toString().padStart(5, "0")}`, 1, 10_000 + index),
+            ),
+        )
+
+        const snapshot = await repository.readRangeSnapshot({ startMs: 0, endMs: 20_000, pageSize: 128, maxRounds: 256 })
+
+        expect(snapshot).toHaveLength(256)
+        expect(snapshot.at(-1)?.completedAtMs).toBe(10_000 + total - 1)
+    })
+
+    it("keeps the same round coverage when a round stores more revisions", async () => {
+        const revisionsPerRound = [1, 4]
+        const coverage = await Promise.all(
+            revisionsPerRound.map(async (revisions) => {
+                const location = path.join(root, `coverage-${revisions}.db`)
+                const repository = new TaskApiRequestRoundRepository({ taskId: "task-a", location })
+                repositories.push(repository)
+                await repository.append(
+                    Array.from({ length: 600 }, (_, index) => {
+                        const completedAtMs = 10_000 + index
+                        const roundId = `task-a:request-a:provider:${index.toString().padStart(5, "0")}`
+                        return Array.from({ length: revisions }, (_, revision) => round(roundId, revision, completedAtMs))
+                    }).flat(),
+                )
+                return repository.readRangeSnapshot({ startMs: 0, endMs: 20_000, pageSize: 128, maxRounds: 400 })
+            }),
+        )
+
+        // The budget counts rounds, so quadrupling revisions must not shrink coverage.
+        expect(coverage[0]).toHaveLength(400)
+        expect(coverage[1]).toHaveLength(400)
+        expect(new Set(coverage[1]?.map(({ roundId }) => roundId)).size).toBe(400)
+        expect(coverage[1]?.every(({ revision }) => revision === 3)).toBe(true)
+        expect(coverage[1]?.at(-1)?.completedAtMs).toBe(coverage[0]?.at(-1)?.completedAtMs)
+    })
+
+    it("does not re-run the window per page as the history grows", async () => {
+        const smallPath = path.join(root, "scaling-small.db")
+        const largePath = path.join(root, "scaling-large.db")
+        const build = async (location: string, rounds: number) => {
+            const repository = new TaskApiRequestRoundRepository({ taskId: "task-a", location })
+            repositories.push(repository)
+            await repository.append(
+                Array.from({ length: rounds }, (_, index) => {
+                    const completedAtMs = 10_000 + index
+                    const roundId = `task-a:request-a:provider:${index.toString().padStart(6, "0")}`
+                    return [round(roundId, 0, completedAtMs), round(roundId, 1, completedAtMs)]
+                }).flat(),
+            )
+            return repository
+        }
+        const small = await build(smallPath, 1_000)
+        const large = await build(largePath, 4_000)
+
+        const measure = async (repository: TaskApiRequestRoundRepository) => {
+            // Warm the page so the comparison measures the window work, not setup.
+            await repository.readRangeSnapshot({ startMs: 0, endMs: 30_000, pageSize: 128 })
+            const startedAt = performance.now()
+            await repository.readRangeSnapshot({ startMs: 0, endMs: 30_000, pageSize: 128 })
+            return performance.now() - startedAt
+        }
+        const smallMs = await measure(small)
+        const largeMs = await measure(large)
+
+        // 4x the rows means 4x the pages. A per-page window re-run makes the cost grow
+        // with pages x rows (16x here); one bounded read grows about linearly (<=8x).
+        expect(largeMs).toBeLessThanOrEqual(smallMs * 8 + 40)
+    })
+
     it("does not repeat an initialization failure while closing", async () => {
         const repository = new TaskApiRequestRoundRepository({ taskId: "task-a", location: root })
         repositories.push(repository)

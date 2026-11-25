@@ -1,4 +1,4 @@
-import type { UnifyStore, UnifyStoreTransaction } from "@core/storage/backend/api/UnifyStore"
+import type { UnifyStore } from "@core/storage/backend/api/UnifyStore"
 import { and, asc, desc, eq, gte, latestPerGroup, lt } from "@core/storage/backend/api/UnifyStoreQuery"
 import { createApiResponseExecutionCollection } from "./api-response-execution-collection"
 import {
@@ -12,6 +12,7 @@ import type {
     ApiResponseExecutionRecord,
     ApiResponseExecutionRepository,
 } from "./api-response-execution-types"
+import { scanNewestGroups } from "./newest-group-scan"
 
 export interface TaskApiResponseExecutionRepositoryOptions {
     readonly taskId: string
@@ -20,6 +21,12 @@ export interface TaskApiResponseExecutionRepositoryOptions {
 }
 
 const DEFAULT_RECENT_EXECUTION_LIMIT = 60
+
+/** Executions one range read keeps; see the round repository's round budget. */
+const DEFAULT_RANGE_MAX_ROUNDS = 32_768
+
+/** Physical-row safety ceiling for a range scan across every widening. */
+const DEFAULT_RANGE_SCAN_ROWS = 262_144
 
 /** Owns canonical complete-execution persistence for one Task. */
 export class TaskApiResponseExecutionRepository implements ApiResponseExecutionRepository {
@@ -83,37 +90,31 @@ export class TaskApiResponseExecutionRepository implements ApiResponseExecutionR
         assertRangeSnapshotQuery(query)
         await this.initialize()
         await this.waitForWrites()
-        const entities = await this.requireCollection().transaction(async (transaction) => {
-            const snapshot: ApiResponseExecutionEntity[] = []
-            let cursorExecutionId: string | undefined
-            while (true) {
-                const page = await readCanonicalRangePage(transaction, {
-                    taskId: this.options.taskId,
-                    startMs: query.startMs,
-                    endMs: query.endMs,
-                    pageSize: query.pageSize,
-                    cursorExecutionId,
+        const fields = ApiResponseExecutionEntity.storage.fields
+        // Cap the source rows before selecting, for the same reason as the round
+        // repository: a ranking selection makes SQLite materialize the whole window
+        // before LIMIT applies, so the bound has to limit physical rows instead. The
+        // bound counts executions, so extra revisions cost rows rather than coverage.
+        const scan = await scanNewestGroups<ApiResponseExecutionRecord>({
+            targetGroups: query.maxRounds ?? DEFAULT_RANGE_MAX_ROUNDS,
+            maxScanRows: DEFAULT_RANGE_SCAN_ROWS,
+            keyOf: ({ executionId }) => executionId,
+            fetch: async (limit) => {
+                const result = await this.requireCollection().query({
+                    where: and(
+                        eq(fields.taskId, this.options.taskId),
+                        gte(fields.completedAtMs, query.startMs),
+                        lt(fields.completedAtMs, query.endMs),
+                    ),
+                    orderBy: [desc(fields.completedAtMs), desc(fields.providerAttempt), desc(fields.executionId)],
+                    limit,
                 })
-                const newEntities =
-                    cursorExecutionId === undefined ? page : page.filter(({ executionId }) => executionId !== cursorExecutionId)
-                snapshot.push(...newEntities)
-                if (page.length < query.pageSize) break
-                const nextCursor = page.at(-1)?.executionId
-                if (!nextCursor || nextCursor === cursorExecutionId) {
-                    throw new Error("API response execution range pagination did not advance")
-                }
-                cursorExecutionId = nextCursor
-            }
-            return snapshot
+                return result.records.map(fromApiResponseExecutionEntity)
+            },
         })
-        return entities
-            .map(fromApiResponseExecutionEntity)
-            .sort(
-                (left, right) =>
-                    left.completedAtMs - right.completedAtMs ||
-                    left.providerAttempt - right.providerAttempt ||
-                    left.executionId.localeCompare(right.executionId),
-            )
+        const executions = selectLatestExecutions(scan.rows)
+        const target = query.maxRounds ?? DEFAULT_RANGE_MAX_ROUNDS
+        return executions.length > target ? executions.slice(-target) : executions
     }
 
     async waitForWrites(): Promise<void> {
@@ -164,30 +165,24 @@ export class TaskApiResponseExecutionRepository implements ApiResponseExecutionR
     }
 }
 
-interface CanonicalRangePageQuery {
-    readonly taskId: string
-    readonly startMs: number
-    readonly endMs: number
-    readonly pageSize: number
-    readonly cursorExecutionId?: string
-}
-
-async function readCanonicalRangePage(
-    transaction: UnifyStoreTransaction<ApiResponseExecutionEntity>,
-    query: CanonicalRangePageQuery,
-): Promise<ApiResponseExecutionEntity[]> {
-    const fields = ApiResponseExecutionEntity.storage.fields
-    return transaction.query({
-        where: and(
-            eq(fields.taskId, query.taskId),
-            gte(fields.completedAtMs, query.startMs),
-            lt(fields.completedAtMs, query.endMs),
-            ...(query.cursorExecutionId === undefined ? [] : [gte(fields.executionId, query.cursorExecutionId)]),
-        ),
-        select: latestPerGroup({ groupBy: [fields.executionId], orderBy: [desc(fields.revision)] }),
-        orderBy: [asc(fields.executionId)],
-        limit: query.pageSize,
-    })
+/**
+ * Keep only the highest revision of each execution, in the order the rows arrived.
+ *
+ * The in-memory equivalent of the `latestPerGroup` selection, applied after the
+ * row cap so the ranking cost is bounded by the cap rather than the window size.
+ */
+function selectLatestExecutions(records: readonly ApiResponseExecutionRecord[]): ApiResponseExecutionRecord[] {
+    const latest = new Map<string, ApiResponseExecutionRecord>()
+    for (const record of records) {
+        const current = latest.get(record.executionId)
+        if (!current || record.revision > current.revision) latest.set(record.executionId, record)
+    }
+    return [...latest.values()].sort(
+        (left, right) =>
+            left.completedAtMs - right.completedAtMs ||
+            left.providerAttempt - right.providerAttempt ||
+            left.executionId.localeCompare(right.executionId),
+    )
 }
 
 function assertPositiveLimit(value: number, label: string): void {

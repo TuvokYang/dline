@@ -48,6 +48,15 @@ export interface ApiRequestRoundRangeSnapshotQuery {
     readonly startMs: number
     readonly endMs: number
     readonly pageSize: number
+    /**
+     * Rounds the window should still cover, counted after the latest revision of
+     * each round is selected.
+     *
+     * This is deliberately a round count, not a row count: a round owns several
+     * revisions, so a row bound would cover fewer rounds as revisions accumulate
+     * and silently drop history from a long Task.
+     */
+    readonly maxRounds?: number
 }
 
 export interface ApiRequestRoundCumulativeUsage {

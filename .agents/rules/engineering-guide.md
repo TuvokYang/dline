@@ -72,6 +72,14 @@ Check `package.json` before choosing a verification command. Current primary scr
 - Do not add speculative `try-catch` around deterministic computations, statically checked operations, or operations whose validated inputs and contract rule out the failure being caught. Type checking does not make filesystem, network, process, or persistence operations infallible; handle their actual failures at the appropriate boundary.
 - Use `finally` for required resource cleanup. A distinct rollback or recovery operation belongs to the boundary that owns it, not to repeated defensive catches in its callees. Cancellation must retain its existing meaning and must not be converted into success.
 
+## Defensive code boundaries
+
+Defensive code here means extra checks, fallback values, exception wrappers, filtering, or alternate paths added to tolerate hypothetical invalid internal states instead of relying on or fixing the owning contract. Do not add or expand it.
+
+- Consume guarantees already established by types, schemas, configuration resolution, or the owning boundary directly. For example, do not repeat `Number.isFinite`, rounding, or clamping after the configuration owner has already resolved a valid limit; do not recheck a schema-validated parameter's runtime type inside each callee.
+- Do not turn a broken invariant into apparent success with an empty array, `0`, stale data, a swallowed exception, or a fallback branch. Correct the producer or owning contract; handle a real failure once at the boundary that owns its outcome.
+- Required business decisions such as cancellation, permission refusal, and proof of physical resource stop are not speculative defensive code. Validate genuinely untrusted file/network/process/persisted input at its owning boundary, without duplicating that validation downstream.
+
 ## Spec design: do not evade defects with defensive programming
 
 Do not use defensive programming to evade root-cause fixes or required behavior. A spec must not invent unnecessary invariants, then prescribe filtering, disabling features, dropping data, or stale-data substitution to satisfy them. Limit failure to the operation that actually failed.
@@ -79,6 +87,9 @@ Do not use defensive programming to evade root-cause fixes or required behavior.
 **Example:** a navigator needs message-index jumps and per-interval tool counts, not strictly increasing timestamps. Declaring timestamp disorder a permanent error that hides the navigator is a contract defect; filtering points or showing an old snapshot only conceals it. Fix timestamp publication independently, aggregate every index interval, and let a missing target end only that click—not disable other points or stop updates.
 
 ## Test and verification contracts
+
+- Organize tests by module or business boundary, not by source file. Do not mechanically create one unit-test file for each implementation file; exercise the module's observable contract across its collaborating components.
+- Low-value unit tests are prohibited. Do not add tests to inflate file coverage, case counts, or completion records; each test must detect a plausible violation of the module's behavior, boundary, failure, or recovery contract.
 
 - Tests assert observable results against an independent oracle: inputs, parsed structure, ordering, state transitions or side effects. Each case must distinguish a plausible incorrect implementation.
 - `expect(text).toContain("implementation-owned prose")`, copied labels/endpoints, tag presence and string snapshots alone do not establish behavior. Exact tokens belong in tests when a parser, protocol, compatibility or accessibility consumer depends on them; exercise that consumer.

@@ -1,4 +1,4 @@
-import type { UnifyStore, UnifyStoreTransaction } from "@core/storage/backend/api/UnifyStore"
+import type { UnifyStore } from "@core/storage/backend/api/UnifyStore"
 import { and, asc, desc, eq, gte, latestPerGroup, lt } from "@core/storage/backend/api/UnifyStoreQuery"
 import { Logger } from "@shared/services/Logger"
 import { createApiRequestRoundCollection } from "./api-request-round-collection"
@@ -14,6 +14,7 @@ import type {
     ApiRequestRoundRecord,
     ApiRequestRoundRepository,
 } from "./api-request-round-types"
+import { scanNewestGroups } from "./newest-group-scan"
 
 export interface TaskApiRequestRoundRepositoryOptions {
     readonly taskId: string
@@ -24,6 +25,21 @@ export interface TaskApiRequestRoundRepositoryOptions {
 }
 
 const DEFAULT_RECENT_ROUND_LIMIT = 60
+/** Physical rows one recent read inspects before selecting; a round holds few revisions. */
+const DEFAULT_RECENT_SCAN_ROWS = 4_096
+
+/**
+ * Rounds one range read keeps. Chosen so a window that has grown far beyond any
+ * chart's point budget still answers in well under the Webview RPC timeout.
+ */
+const DEFAULT_RANGE_MAX_ROUNDS = 32_768
+
+/**
+ * Physical rows one range scan may materialize across every widening. This is a
+ * safety ceiling for pathological revision counts, not the coverage definition;
+ * coverage is expressed in rounds so extra revisions cannot shrink it.
+ */
+const DEFAULT_RANGE_SCAN_ROWS = 262_144
 
 /** Owns canonical Provider round persistence for one Task. */
 export class TaskApiRequestRoundRepository implements ApiRequestRoundRepository {
@@ -56,13 +72,15 @@ export class TaskApiRequestRoundRepository implements ApiRequestRoundRepository 
         await this.initialize()
         await this.waitForWrites()
         const fields = ApiRequestRoundEntity.storage.fields
+        // The recent read runs on every chat fold and has no time bound, so it caps
+        // the physical rows it reads before selecting instead of ranking the whole
+        // Task history on each call.
         const result = await this.requireCollection().query({
             where: eq(fields.taskId, this.options.taskId),
-            select: latestPerGroup({ groupBy: [fields.roundId], orderBy: [desc(fields.revision)] }),
-            orderBy: [desc(fields.completedAtMs), desc(fields.providerAttempt)],
-            limit,
+            orderBy: [desc(fields.completedAtMs), desc(fields.providerAttempt), desc(fields.roundId)],
+            limit: Math.max(limit, DEFAULT_RECENT_SCAN_ROWS),
         })
-        return result.records.reverse().map(fromApiRequestRoundEntity)
+        return selectLatestRevisions(result.records.map(fromApiRequestRoundEntity)).slice(-limit)
     }
 
     async readRange(query: ApiRequestRoundRangeQuery): Promise<ApiRequestRoundRecord[]> {
@@ -87,36 +105,32 @@ export class TaskApiRequestRoundRepository implements ApiRequestRoundRepository 
         assertRangeSnapshotQuery(query)
         await this.initialize()
         await this.waitForWrites()
-        const entities = await this.requireCollection().transaction(async (transaction) => {
-            const snapshot: ApiRequestRoundEntity[] = []
-            let cursorRoundId: string | undefined
-            while (true) {
-                const page = await readCanonicalRangePage(transaction, {
-                    taskId: this.options.taskId,
-                    startMs: query.startMs,
-                    endMs: query.endMs,
-                    pageSize: query.pageSize,
-                    cursorRoundId,
+        const fields = ApiRequestRoundEntity.storage.fields
+        // Read the newest physical rows first, then select the latest revision of
+        // each round from that bounded slice. Ranking inside the same query lets
+        // SQLite materialize the whole window before applying LIMIT, so the bound
+        // must cap the source rows instead. The bound counts rounds, so a round
+        // that gained revisions costs more rows rather than losing coverage.
+        const scan = await scanNewestGroups<ApiRequestRoundRecord>({
+            targetGroups: query.maxRounds ?? DEFAULT_RANGE_MAX_ROUNDS,
+            maxScanRows: DEFAULT_RANGE_SCAN_ROWS,
+            keyOf: ({ roundId }) => roundId,
+            fetch: async (limit) => {
+                const result = await this.requireCollection().query({
+                    where: and(
+                        eq(fields.taskId, this.options.taskId),
+                        gte(fields.completedAtMs, query.startMs),
+                        lt(fields.completedAtMs, query.endMs),
+                    ),
+                    orderBy: [desc(fields.completedAtMs), desc(fields.providerAttempt), desc(fields.roundId)],
+                    limit,
                 })
-                const newEntities = cursorRoundId === undefined ? page : page.filter(({ roundId }) => roundId !== cursorRoundId)
-                snapshot.push(...newEntities)
-                if (page.length < query.pageSize) break
-                const nextCursorRoundId = page.at(-1)?.roundId
-                if (!nextCursorRoundId || nextCursorRoundId === cursorRoundId) {
-                    throw new Error("API request round range pagination did not advance")
-                }
-                cursorRoundId = nextCursorRoundId
-            }
-            return snapshot
+                return result.records.map(fromApiRequestRoundEntity)
+            },
         })
-        return entities
-            .map(fromApiRequestRoundEntity)
-            .sort(
-                (left, right) =>
-                    left.completedAtMs - right.completedAtMs ||
-                    left.providerAttempt - right.providerAttempt ||
-                    left.roundId.localeCompare(right.roundId),
-            )
+        const rounds = selectLatestRevisions(scan.rows)
+        const target = query.maxRounds ?? DEFAULT_RANGE_MAX_ROUNDS
+        return rounds.length > target ? rounds.slice(-target) : rounds
     }
 
     async readRecentHistory(limit = DEFAULT_RECENT_ROUND_LIMIT): Promise<ApiRequestRoundRecord[]> {
@@ -138,7 +152,15 @@ export class TaskApiRequestRoundRepository implements ApiRequestRoundRepository 
     async readCumulativeUsage(): Promise<ApiRequestRoundCumulativeUsage> {
         await this.initialize()
         await this.waitForWrites()
-        const exact = await this.readRangeSnapshot({ startMs: 0, endMs: Number.MAX_SAFE_INTEGER, pageSize: 512 })
+        // The cumulative total reuses the bounded slice the range read produces.
+        // Materializing the whole history here made opening a long Task pay for
+        // every round it had ever recorded.
+        const exact = await this.readRangeSnapshot({
+            startMs: 0,
+            endMs: Number.MAX_SAFE_INTEGER,
+            pageSize: 512,
+            maxRounds: DEFAULT_RANGE_MAX_ROUNDS,
+        })
         let legacyRows: ApiRequestRoundLegacyImportEntity[] = []
         if (this.legacyCollection) {
             try {
@@ -289,6 +311,27 @@ function fromLegacyEntity(entity: ApiRequestRoundLegacyImportEntity): ApiRequest
     }
 }
 
+/**
+ * Keep only the highest revision of each round, in the order the rows arrived.
+ *
+ * This is the in-memory equivalent of the `latestPerGroup` selection the query
+ * layer cannot run under a row cap: the cap has to apply to the physical rows
+ * first, so the ranking happens afterwards on the bounded slice.
+ */
+function selectLatestRevisions(records: readonly ApiRequestRoundRecord[]): ApiRequestRoundRecord[] {
+    const latest = new Map<string, ApiRequestRoundRecord>()
+    for (const record of records) {
+        const current = latest.get(record.roundId)
+        if (!current || record.revision > current.revision) latest.set(record.roundId, record)
+    }
+    return [...latest.values()].sort(
+        (left, right) =>
+            left.completedAtMs - right.completedAtMs ||
+            left.providerAttempt - right.providerAttempt ||
+            left.roundId.localeCompare(right.roundId),
+    )
+}
+
 function sortRounds(rounds: readonly ApiRequestRoundRecord[]): ApiRequestRoundRecord[] {
     return [...rounds].sort(
         (left, right) =>
@@ -428,32 +471,6 @@ function aggregateCumulativeUsage(
         ...(costAvailable ? { totalCost } : {}),
         ...(currency !== undefined && !mixedCurrency ? { currency } : {}),
     }
-}
-
-interface CanonicalRangePageQuery {
-    readonly taskId: string
-    readonly startMs: number
-    readonly endMs: number
-    readonly pageSize: number
-    readonly cursorRoundId?: string
-}
-
-async function readCanonicalRangePage(
-    transaction: UnifyStoreTransaction<ApiRequestRoundEntity>,
-    query: CanonicalRangePageQuery,
-): Promise<ApiRequestRoundEntity[]> {
-    const fields = ApiRequestRoundEntity.storage.fields
-    return transaction.query({
-        where: and(
-            eq(fields.taskId, query.taskId),
-            gte(fields.completedAtMs, query.startMs),
-            lt(fields.completedAtMs, query.endMs),
-            ...(query.cursorRoundId === undefined ? [] : [gte(fields.roundId, query.cursorRoundId)]),
-        ),
-        select: latestPerGroup({ groupBy: [fields.roundId], orderBy: [desc(fields.revision)] }),
-        orderBy: [asc(fields.roundId)],
-        limit: query.pageSize,
-    })
 }
 
 function assertPositiveLimit(value: number, label: string): void {
