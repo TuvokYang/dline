@@ -206,7 +206,13 @@ export class SemanticInputAdmissionService {
         pinnedRevision: boolean,
     ): Review<ReviewedEntities> {
         const locator = { documentId: document.documentId }
-        if (!pinnedRevision && document.catalogRevision !== String(catalog.revision)) {
+        // Only active slash commands depend on the catalog descriptor set
+        // (dynamic skills, workflows, MCP prompts and gated built-ins). Plain
+        // text, quotes, held pasted candidates, mentions and verified
+        // attachments carry no catalog command authority and must not be
+        // rejected when an unrelated capability refresh bumps the revision.
+        const hasActiveSlashCommand = document.nodes.some((node) => isSlashCommandNode(node) && isActiveEntity(node))
+        if (!pinnedRevision && hasActiveSlashCommand && document.catalogRevision !== String(catalog.revision)) {
             return refuse(
                 semanticInputDiagnostic(
                     "semantic_input_catalog_stale",

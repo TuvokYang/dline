@@ -22,8 +22,17 @@ export interface IntakeReduction {
     readonly commands: readonly Command[]
 }
 
+/**
+ * Direct (non-queued) inputs released when their round failed, withdrew, or
+ * was cancelled are never admitted again (see {@link pendingIntakeEntryIds}),
+ * so they must not permanently occupy intake box capacity.
+ */
+function isAbandonedDirectEntry(entry: IntakeEntry): boolean {
+    return entry.queue === undefined && entry.state === "released"
+}
+
 function activeCount(entries: readonly IntakeEntry[]): number {
-    return entries.filter((entry) => entry.state !== "consumed").length
+    return entries.filter((entry) => entry.state !== "consumed" && !isAbandonedDirectEntry(entry)).length
 }
 
 function nextSequence(entries: readonly IntakeEntry[], requested?: number): number {

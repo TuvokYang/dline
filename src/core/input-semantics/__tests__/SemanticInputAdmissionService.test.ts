@@ -135,6 +135,16 @@ describe("SemanticInputAdmissionService", () => {
         expect(result.diagnostics[0].code).toBe("semantic_input_catalog_stale")
     })
 
+    it("admits documents without active slash commands even when the catalog revision moved on", async () => {
+        const pasted = { ...lex("log: /compact and @/etc/hosts", "candidate_only"), catalogRevision: "0" }
+
+        const result = await service().admit(pasted)
+
+        expect(result.ok).toBe(true)
+        if (!result.ok) return
+        expect(result.admitted.text).toBe("log: /compact and @/etc/hosts")
+    })
+
     it("reviews against the catalog a submission was composed with, not one published since", async () => {
         // Discovery advanced between lexing and admission. The document is not
         // stale — it names exactly the catalog it was built from — so refusing it

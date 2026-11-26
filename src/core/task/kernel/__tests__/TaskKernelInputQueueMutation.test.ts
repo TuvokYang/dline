@@ -167,6 +167,59 @@ describe("canonical input queue mutations", () => {
         expect(overflow).toMatchObject({ kind: "rejected", reason: "capacity_exceeded", state: full })
     })
 
+    it("does not let abandoned released direct inputs exhaust intake box capacity", () => {
+        const initial = running()
+        const abandonedDirect = Array.from({ length: 40 }, (_, index) => ({
+            entryId: `direct-${index}`,
+            payloadRef: `payload:direct-${index}`,
+            source: "user" as const,
+            mode: "queued" as const,
+            sequence: index + 1,
+            state: "released" as const,
+        }))
+        const withAbandoned = {
+            ...initial,
+            intake: { ...initial.intake, queued: abandonedDirect },
+        }
+
+        const enqueued = accepted(
+            transition(withAbandoned, {
+                type: "input_queue.enqueued",
+                generation: 0,
+                entryId: "queued-1",
+                payloadRef: "payload:queued-1",
+                mode: "steering",
+            }),
+        )
+        expect(enqueued.state.intake.queued.find((entry) => entry.entryId === "queued-1")).toMatchObject({
+            state: "accepted",
+            mode: "steering",
+            queue: { editing: false },
+        })
+
+        // Retained queue entries in `released` state remain deliverable and still count toward capacity.
+        const releasedRetained = Array.from({ length: 32 }, (_, index) => ({
+            entryId: `retained-${index}`,
+            payloadRef: `payload:retained-${index}`,
+            source: "user" as const,
+            mode: "queued" as const,
+            sequence: index + 1,
+            queue: { editing: false },
+            state: "released" as const,
+        }))
+        const fullRetained = {
+            ...initial,
+            intake: { ...initial.intake, queued: releasedRetained },
+        }
+        const overflow = transition(fullRetained, {
+            type: "input_queue.enqueued",
+            generation: 0,
+            entryId: "overflow",
+            payloadRef: "payload:overflow",
+        })
+        expect(overflow).toMatchObject({ kind: "rejected", reason: "capacity_exceeded", state: fullRetained })
+    })
+
     it("reserves every non-editing steering entry before queued input and consumes it with the dialog response", () => {
         let state = enqueue(enqueue(enqueue(running(), "queued"), "steering"), "editing")
         state = accepted(transition(state, { type: "input_queue.mode_toggled", generation: 0, entryId: "steering" })).state

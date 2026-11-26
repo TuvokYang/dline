@@ -98,10 +98,20 @@ export class InputSemanticCatalogService {
 
     private lastConflicts: readonly CatalogConflict[] = []
 
+    private readonly listeners = new Set<(catalog: InputSemanticCatalog) => void>()
+
     constructor(
         private readonly port: CapabilityInventoryPort,
         private commandAvailability: SemanticCommandAvailability = { awayMode: true },
     ) {}
+
+    /** Subscribe to catalog revision advances, including those triggered by first discovery. */
+    onDidChange(listener: (catalog: InputSemanticCatalog) => void): () => void {
+        this.listeners.add(listener)
+        return () => {
+            this.listeners.delete(listener)
+        }
+    }
 
     current(): InputSemanticCatalog {
         return this.catalog
@@ -153,6 +163,13 @@ export class InputSemanticCatalogService {
         const published = this.catalog.revision !== UNDISCOVERED_REVISION
         if (published && sameDescriptors(descriptors, this.catalog.descriptors)) return this.catalog
         this.catalog = { revision: this.catalog.revision + 1, descriptors }
+        for (const listener of Array.from(this.listeners)) {
+            try {
+                listener(this.catalog)
+            } catch (error) {
+                Logger.warn(`[SemanticInput] catalog change listener failed: ${error}`)
+            }
+        }
         return this.catalog
     }
 

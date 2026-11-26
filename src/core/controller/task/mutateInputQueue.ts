@@ -1,5 +1,6 @@
 import type { DraftDocumentAdoption } from "@core/input-semantics/DraftInputResourceStore"
 import { bindDraftDocument } from "@core/input-semantics/OpeningDocumentBinding"
+import { QUEUE_COMMAND_PERFORMED } from "@core/task/session/CanonicalInputQueueApplication"
 import type { CanonicalInputQueueMutation } from "@core/task/session/InputQueueApplicationPort"
 import { SemanticInputRejectedError } from "@core/task/session/TaskInputAdmission"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
@@ -138,7 +139,16 @@ export async function mutateInputQueue(
         return MutateInputQueueResponse.create({ accepted: false, result: "invalid_payload" })
     }
     mutation = bound.mutation
-    const outcome = await task.inputQueue.mutate(mutation)
+    let outcome: Awaited<ReturnType<typeof task.inputQueue.mutate>>
+    try {
+        outcome = await task.inputQueue.mutate(mutation)
+    } catch (error) {
+        if (!(error instanceof SemanticInputRejectedError)) throw error
+        Logger.warn(
+            `[inputQueue] Refusing inadmissible queued input: ${error.diagnostics.map((diagnostic) => diagnostic.code).join(", ") || error.message}`,
+        )
+        return MutateInputQueueResponse.create({ accepted: false, result: "invalid_payload" })
+    }
     if (!outcome.accepted) {
         // A refused change left the queue untouched, so there is nothing to show.
         return MutateInputQueueResponse.create(outcome)
@@ -147,7 +157,17 @@ export async function mutateInputQueue(
     await bound.adoption?.release()
     // The Webview keeps no local queue copy, so an accepted mutation that is not
     // published stays invisible until some unrelated state change happens to
-    // publish next. An idle task has no such change.
-    await controller.postStateToWebview(IMMEDIATE_OPERATIONS.has(mutation.kind) ? { immediate: true } : undefined)
+    // publish next. Discrete queue operations only change `inputQueue`, so they
+    // publish through a lightweight fast patch instead of waiting behind full
+    // state builds that active streaming/compaction patches can starve. A bare
+    // lifecycle command (such as `/compact`) also adds a chat row and changes
+    // task view state, so it still uses immediate full publication.
+    const postOptions =
+        outcome.result === QUEUE_COMMAND_PERFORMED
+            ? { immediate: true }
+            : IMMEDIATE_OPERATIONS.has(mutation.kind)
+              ? { immediate: true, projection: "input-queue" as const }
+              : undefined
+    await controller.postStateToWebview(postOptions)
     return MutateInputQueueResponse.create(outcome)
 }

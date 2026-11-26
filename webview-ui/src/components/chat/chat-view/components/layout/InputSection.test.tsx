@@ -398,6 +398,31 @@ describe("InputSection deferred task submission", () => {
         acceptEnqueue(false)
         await settleEffects()
         expect(current.chatState.composer.retire).not.toHaveBeenCalled()
+        expect(current.chatState.composer.reportSendRefusal).toHaveBeenCalledWith("input_not_ready")
+    })
+
+    it.each([
+        ["queue_full", "queue_full"],
+        ["invalid_payload", "submission_rejected"],
+        ["task_read_only", "input_not_ready"],
+    ] as const)("explains a refused enqueue (%s -> %s) while keeping the draft", async (result, expectedRefusal) => {
+        const onEnqueue = vi.fn(async () => ({ accepted: false, result }))
+        const current = props(draft("queue me"))
+        render(
+            <InputSection
+                {...current}
+                enabled={false}
+                onEnqueueInput={onEnqueue}
+                onSubmit={vi.fn(async () => undefined)}
+                submissionScope="task-1"
+            />,
+        )
+
+        fireEvent.click(screen.getByRole("button", { name: "Submit" }))
+        await settleEffects()
+
+        expect(current.chatState.composer.retire).not.toHaveBeenCalled()
+        expect(current.chatState.composer.reportSendRefusal).toHaveBeenCalledWith(expectedRefusal)
     })
 
     // Clearing the composer is a state update, so the text area still reports the

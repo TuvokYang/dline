@@ -96,5 +96,9 @@ export function composerCarriesAction(view: TaskViewState, action: TaskViewActio
  */
 export function composerResumesTask(view: TaskViewState | undefined): boolean {
     if (!view) return false
+    // Once the user has clicked Resume and the dialog is resolving, the task is
+    // already starting work and must allow queueing/steering instead of locking
+    // the composer to an unavailable Resume action.
+    if (view.activeInteraction?.status === "resolving") return false
     return view.input.enterAction === "resume" || view.footer.actions.some((action) => action.type === "resume")
 }

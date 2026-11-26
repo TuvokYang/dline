@@ -112,6 +112,20 @@ function isCompletionBeingPresented(state: Readonly<TaskState>): boolean {
     return !primary || (primary.kind === "completion" && primary.status !== "failed")
 }
 
+function isCompactionInFlight(state: Readonly<TaskState>): boolean {
+    return state.flow.compaction?.status === "scheduled" || state.flow.compaction?.status === "running"
+}
+
+/**
+ * Whether work is actively running even though `flow.phase` still names a
+ * terminal state: manual compaction started beside a completed/errored task,
+ * or an error recovery dialog already accepted by the user and resolving into
+ * the retried round.
+ */
+function isWorkInProgressOnTerminalFlow(state: Readonly<TaskState>): boolean {
+    return isCompactionInFlight(state) || (state.flow.phase === "error" && state.dialog.primary?.status === "resolving")
+}
+
 function projectInput(
     state: Readonly<TaskState>,
     terminal: CanonicalTaskTerminal,
@@ -125,7 +139,7 @@ function projectInput(
     if (approval) {
         return { mode: "dialog", ownerInteractionId: approval.interactionId, ownerBlockId: approval.blockId }
     }
-    if (isCompletionBeingPresented(state)) return { mode: "queued" }
+    if (isCompletionBeingPresented(state) || isWorkInProgressOnTerminalFlow(state)) return { mode: "queued" }
     if (terminal !== "active") return { mode: "disabled" }
     if (state.flow.phase === "idle") return { mode: "disabled" }
     if (state.flow.phase === "waiting" && state.flow.replyAdmission !== undefined) return { mode: "reply" }

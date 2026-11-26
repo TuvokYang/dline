@@ -791,4 +791,113 @@ describe("Controller state publication coalescing", () => {
         await settle()
         expect(sendStateUpdate).toHaveBeenCalledTimes(1)
     })
+
+    it("publishes input-queue updates through a fast patch without building full state", async () => {
+        const { controller, buildState } = createController("task-a")
+        const queueEntries = [
+            { id: "entry-1", text: "steer during streaming", images: [], files: [], mode: "steering" as const, editing: false },
+        ]
+        Object.assign(controller, {
+            task: {
+                taskId: "task-a",
+                state: () => ({
+                    ...createInitialTaskState("task-a"),
+                    intake: {
+                        queued: [
+                            {
+                                entryId: "entry-1",
+                                payloadRef: "payload-1",
+                                source: "user",
+                                mode: "steering",
+                                sequence: 1,
+                                queue: { editing: false },
+                                state: "accepted",
+                            },
+                        ],
+                        background: [],
+                        coTask: [],
+                    },
+                }),
+                inputQueue: { project: vi.fn(async () => queueEntries) },
+            },
+        })
+
+        await controller.postStateToWebview({ immediate: true, projection: "input-queue" })
+
+        expect(buildState).not.toHaveBeenCalled()
+        expect(sendStateUpdate).not.toHaveBeenCalled()
+        expect(sendStatePatch).toHaveBeenCalledWith(controller, { stateRevision: 1, inputQueue: queueEntries }, undefined)
+    })
+
+    it("includes inputQueue on committed task-view patches only when the visible queue changed", async () => {
+        const { controller } = createController("task-a")
+        const taskViewState = { taskId: "task-a", stateRevision: 9 } as TaskViewState
+        vi.spyOn(
+            controller as unknown as { projectCurrentTaskViewState(): TaskViewState | undefined },
+            "projectCurrentTaskViewState",
+        ).mockReturnValue(taskViewState)
+
+        let queuedEntries = [
+            {
+                entryId: "entry-1",
+                payloadRef: "payload-1",
+                source: "user" as const,
+                mode: "steering" as const,
+                sequence: 1,
+                queue: { editing: false },
+                state: "accepted" as const,
+            },
+        ]
+        const project = vi.fn(async () =>
+            queuedEntries
+                .filter((entry) => entry.state === "accepted")
+                .map((entry) => ({
+                    id: entry.entryId,
+                    text: "steer me",
+                    images: [],
+                    files: [],
+                    mode: entry.mode,
+                    editing: false,
+                })),
+        )
+        Object.assign(controller, {
+            task: {
+                taskId: "task-a",
+                state: () => ({
+                    ...createInitialTaskState("task-a"),
+                    intake: { queued: queuedEntries, background: [], coTask: [] },
+                }),
+                inputQueue: { project },
+            },
+        })
+
+        await controller.postTaskViewPatchToWebview({ syncInputQueue: true })
+        expect(project).toHaveBeenCalledTimes(1)
+        expect(sendStatePatch).toHaveBeenNthCalledWith(
+            1,
+            controller,
+            {
+                stateRevision: 1,
+                taskViewState,
+                inputQueue: [{ id: "entry-1", text: "steer me", images: [], files: [], mode: "steering", editing: false }],
+            },
+            undefined,
+        )
+
+        // Unchanged queue skips payload projection and keeps the patch view-only.
+        await controller.postTaskViewPatchToWebview({ syncInputQueue: true })
+        expect(project).toHaveBeenCalledTimes(1)
+        expect(sendStatePatch).toHaveBeenNthCalledWith(2, controller, { stateRevision: 2, taskViewState }, undefined)
+
+        // Consuming the steering entry updates the signature and clears the queue in the Webview.
+        queuedEntries = [{ ...queuedEntries[0], state: "consumed" as never }]
+        await controller.postTaskViewPatchToWebview({ syncInputQueue: true })
+        expect(project).toHaveBeenCalledTimes(2)
+        expect(sendStatePatch).toHaveBeenNthCalledWith(
+            3,
+            controller,
+            { stateRevision: 3, taskViewState, inputQueue: [] },
+            undefined,
+        )
+    })
 })

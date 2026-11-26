@@ -6,11 +6,20 @@ import ChatTextArea from "@/components/chat/ChatTextArea"
 import type { ComposerSubmitKind } from "@/components/chat/input/composer-action/composer-action"
 import { InputQueuePanel, type InputQueuePanelEntry, type InputQueuePanelMode } from "@/components/chat/input/InputQueuePanel"
 import type { ComposerSegment } from "@/components/chat/input/semantic-composer/model"
-import type { ComposerSendDraft } from "@/components/chat/input/semantic-composer/send-draft"
+import type { ComposerSendDraft, ComposerSendRefusal } from "@/components/chat/input/semantic-composer/send-draft"
+import type { InputQueueDraft, InputQueueMutationOutcome } from "@/components/chat/input/useInputQueue"
 import QuotedMessagePreview from "@/components/chat/QuotedMessagePreview"
 import type { AcceptedInteractionSettlement, InteractionDraft } from "@/task-interaction/types"
 import { ChatState, MessageHandlers, ScrollBehavior } from "../../types/chatTypes"
 import { resolveSendDisposition } from "./submit-or-enqueue"
+
+type QueueMutationResult = Promise<boolean | InputQueueMutationOutcome> | undefined
+
+function refusalForQueueResult(result: string | undefined): ComposerSendRefusal {
+    if (result === "queue_full") return "queue_full"
+    if (result === "invalid_payload") return "submission_rejected"
+    return "input_not_ready"
+}
 
 interface InputSectionProps {
     chatState: ChatState
@@ -44,19 +53,13 @@ interface InputSectionProps {
     /**
      * Receives a draft for the queue in the mode it waits in: a send blocked
      * because the task is still busy is `queued`, the steer shortcut `steering`.
-     * Resolves false when refused.
+     * Resolves false (or `{ accepted: false, result }`) when refused.
      */
-    onEnqueueInput?: (
-        draft: import("@/components/chat/input/useInputQueue").InputQueueDraft,
-        mode: InputQueuePanelMode,
-    ) => Promise<boolean> | void
+    onEnqueueInput?: (draft: InputQueueDraft, mode: InputQueuePanelMode) => QueueMutationResult
     /** Marks an entry as being edited so it is held back from delivery. */
     onEditQueuedInput?: (id: string) => void
     /** Replaces an edited entry's content, keeping its position and mode. */
-    onCommitQueuedInput?: (
-        id: string,
-        draft: import("@/components/chat/input/useInputQueue").InputQueueDraft,
-    ) => Promise<boolean> | void
+    onCommitQueuedInput?: (id: string, draft: InputQueueDraft) => QueueMutationResult
     /** Releases an edit without changing the entry, making it deliverable again. */
     onCancelQueuedInput?: (id: string) => void
     onToggleQueuedMode?: (id: string) => void
@@ -227,11 +230,16 @@ export const InputSection: React.FC<InputSectionProps> = ({
         // Keep the draft visible until the queue has durably accepted it. The
         // acknowledgement may arrive after the user has edited the composer, so
         // only clear the exact draft that is still pending.
-        const clearAcceptedDraft = (result: Promise<boolean> | void, onAccepted?: () => void) => {
+        const clearAcceptedDraft = (result: QueueMutationResult, onAccepted?: () => void) => {
             void Promise.resolve(result).then(
-                (accepted) => {
-                    if (accepted === false) {
-                        handedToQueueRef.current = undefined
+                (outcome) => {
+                    const accepted = typeof outcome === "object" && outcome !== null ? outcome.accepted : outcome !== false
+                    if (!accepted) {
+                        if (handedToQueueRef.current === capturedDraft.segments) {
+                            handedToQueueRef.current = undefined
+                            const reason = typeof outcome === "object" && outcome !== null ? outcome.result : undefined
+                            composer.reportSendRefusal(refusalForQueueResult(reason))
+                        }
                         return
                     }
                     if (handedToQueueRef.current !== capturedDraft.segments) {
@@ -241,7 +249,10 @@ export const InputSection: React.FC<InputSectionProps> = ({
                     clearComposerDraft()
                 },
                 () => {
-                    handedToQueueRef.current = undefined
+                    if (handedToQueueRef.current === capturedDraft.segments) {
+                        handedToQueueRef.current = undefined
+                        composer.reportSendRefusal("input_not_ready")
+                    }
                 },
             )
         }

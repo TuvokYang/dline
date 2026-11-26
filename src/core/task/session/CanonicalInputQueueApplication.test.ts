@@ -293,6 +293,59 @@ describe("CanonicalInputQueueApplication", () => {
         expect(h.runtime.submit).toHaveBeenCalledWith(expect.objectContaining({ type: "input_queue.enqueued", generation: 1 }))
     })
 
+    it("retries with the latest generation when a concurrent generation bump rejects the first submit", async () => {
+        const h = harness()
+        const submitMock = vi.mocked(h.runtime.submit)
+        const realSubmit = submitMock.getMockImplementation()
+        if (!realSubmit) throw new Error("Expected mock submit implementation")
+        let bumped = false
+        submitMock.mockImplementation(async (event) => {
+            if (!bumped && event.type === "input_queue.enqueued") {
+                bumped = true
+                h.setState((current) => ({ ...current, generation: current.generation + 1 }))
+                return {
+                    kind: "rejected",
+                    state: h.runtime.getState(),
+                    reason: "generation_mismatch",
+                    diagnostic: { code: "generation_mismatch", message: "stale generation" },
+                }
+            }
+            return realSubmit(event)
+        })
+
+        const mutation = h.application.mutate({
+            kind: "enqueue",
+            draft: { text: "steer across cancel boundary", images: [], files: [] },
+            mode: "steering",
+        })
+        h.durable.resolve()
+
+        await expect(mutation).resolves.toEqual({ accepted: true, result: "entry-1" })
+        expect(h.runtime.submit).toHaveBeenCalledTimes(2)
+        expect(h.runtime.submit).toHaveBeenNthCalledWith(
+            1,
+            expect.objectContaining({ type: "input_queue.enqueued", generation: 0, entryId: "entry-1" }),
+        )
+        expect(h.runtime.submit).toHaveBeenNthCalledWith(
+            2,
+            expect.objectContaining({ type: "input_queue.enqueued", generation: 1, entryId: "entry-1" }),
+        )
+    })
+
+    it("reports stale_generation instead of missing_entry when generation_mismatch persists", async () => {
+        const h = harness()
+        vi.mocked(h.runtime.submit).mockResolvedValue({
+            kind: "rejected",
+            state: h.runtime.getState(),
+            reason: "generation_mismatch",
+            diagnostic: { code: "generation_mismatch", message: "stale generation" },
+        })
+
+        await expect(
+            h.application.mutate({ kind: "enqueue", draft: { text: "queue me", images: [], files: [] } }),
+        ).resolves.toEqual({ accepted: false, result: "stale_generation" })
+    })
+
     it("admits a steering enqueue as steering in one event", async () => {
         const h = harness()
         const mutation = h.application.mutate({
