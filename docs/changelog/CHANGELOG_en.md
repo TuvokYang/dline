@@ -7,6 +7,7 @@
 - The environment details block now includes a Workspace Recovery section that tells the model whether checkpoints are enabled.
 
 ### Fixed
+- Fixed checkpoint divider rows leaving blank trailing space to the right of the shifted Compare/Restore buttons by extending the trailing dotted line across the trajectory rail clearance.
 - Fixed queued and steering inputs occasionally being blocked, delayed, or falsely rejected as full while a task is working or compacting by publishing queue updates over fast state patches, stopping abandoned direct inputs from leaking intake capacity, retrying concurrent generation mismatches, keeping semantic catalog revisions synchronized, allowing queueing across compaction, resume/retry transitions, and mode/profile switches, and showing clear refusal feedback.
 - Fixed TaskHeader cumulative input token counts dropping sharply on very long tasks by aggregating lifetime round usage directly in SQLite instead of truncating at the 32,768-round chart window, and preserving the legacy-import degraded marker on read-only history opens.
 - Fixed resuming very long tasks timing out or crashing the extension host with out-of-memory errors by optimizing journal projection and metrics loading, bounding activity hydration and snapshot size, and removing full-table scans and retained history copies on promotion.

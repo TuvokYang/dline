@@ -196,4 +196,16 @@ describe("CheckmarkControl", () => {
 
         expect(screen.queryByRole("button", { name: "Restore Files & Task", exact: true })).not.toBeInTheDocument()
     })
+
+    it("extends the trailing dotted line across the trajectory clearance instead of leaving blank padding", () => {
+        render(<CheckmarkControl hasWorkspaceCheckpoint messageTs={42} />)
+
+        const trailingLine = screen.getByTestId("checkpoint-trailing-line")
+        const buttonGroup = trailingLine.parentElement
+        if (!buttonGroup) throw new Error("Expected checkpoint button group")
+
+        expect(getComputedStyle(trailingLine).width).toBe("calc(5px + var(--chat-trajectory-clearance, 0px))")
+        expect(getComputedStyle(trailingLine).minWidth).toBe("calc(5px + var(--chat-trajectory-clearance, 0px))")
+        expect(getComputedStyle(buttonGroup).paddingInlineEnd).not.toContain("--chat-trajectory-clearance")
+    })
 })
