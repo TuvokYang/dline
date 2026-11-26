@@ -131,6 +131,10 @@ export class ControllerTaskCallbacksOwner {
             // The checklist is the only place item-level TODO work is visible, so
             // usage observes it here rather than re-parsing tool arguments.
             ...(options.observeChecklist === undefined ? {} : { observeChecklist: options.observeChecklist }),
+            // Every committed checklist reaches the tab title through this one
+            // notification, so a caller that replaces the plan cannot leave the
+            // title describing the previous list.
+            onChecklistChanged: () => void options.controller.syncPanelTitle(),
         })
         this.focusChainInstructions = {
             ready: () => this.focusChain.ready(),
@@ -151,11 +155,7 @@ export class ControllerTaskCallbacksOwner {
             cancelRunningCommandTool: () => this.requireCommandExecutor().cancelBackgroundCommand(),
             doesLatestTaskCompletionHaveNewChanges: (completionMessageTs) =>
                 this.checkpointManager?.doesLatestTaskCompletionHaveNewChanges(completionMessageTs) ?? Promise.resolve(false),
-            updateFCListFromToolResponse: async (progress) => {
-                const result = await this.focusChain.updateFCListFromToolResponse(progress)
-                if (result.kind === "applied") void options.controller.syncPanelTitle()
-                return result
-            },
+            updateFCListFromToolResponse: async (progress) => this.focusChain.updateFCListFromToolResponse(progress),
             ...(options.observeChecklist === undefined ? {} : { observeChecklist: options.observeChecklist }),
             postStateToWebview: () => options.controller.postStateToWebview(),
             reinitExistingTaskFromId: (taskId) => options.controller.reinitExistingTaskFromId(taskId),

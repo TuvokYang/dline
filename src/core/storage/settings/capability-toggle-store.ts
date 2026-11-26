@@ -184,20 +184,34 @@ export async function pruneCapabilityOrphans(
     discoveredIds: ReadonlySet<string>,
     scanComplete: boolean,
 ): Promise<number> {
-    const keysNormalized = stateManager.hasNormalizedCapabilityKeys
     let removed = 0
 
     for (const scope of CAPABILITY_SCOPES) {
         const key = SCOPE_KEYS[kind][scope]
         const overrides = stateManager.getScopedCapabilityToggles(scope, key) as ClineRulesToggles
-        const result = pruneOrphanOverrides({ overrides, discoveredIds, scanComplete, keysNormalized })
-        if (!result.pruned) continue
+        // Decide before touching the store: an authoritative scan with no orphan must
+        // not queue a transaction, because every mutation takes the settings lock.
+        if (!pruneOrphanOverrides({ overrides, discoveredIds, scanComplete }).pruned) continue
 
-        await stateManager.mutateScopedCapabilityToggles(scope, key, () => result.pruned as never)
-        removed += result.removedIds.length
-        Logger.debug(
-            `[CapabilityToggle] Pruned ${result.removedIds.length} orphan ${kind} overrides in ${scope}: ${result.removedIds.join(", ")}`,
-        )
+        const removedIds: string[] = []
+        await stateManager.mutateScopedCapabilityToggles(scope, key, (current) => {
+            // Re-decide against the value the transaction actually read. Replacing it
+            // with the map computed above would overwrite overrides another window
+            // wrote between this read and the lock being taken.
+            const result = pruneOrphanOverrides({
+                overrides: current as ClineRulesToggles,
+                discoveredIds,
+                scanComplete,
+            })
+            removedIds.push(...result.removedIds)
+            return (result.pruned ?? current) as never
+        })
+        removed += removedIds.length
+        if (removedIds.length > 0) {
+            Logger.debug(
+                `[CapabilityToggle] Pruned ${removedIds.length} orphan ${kind} overrides in ${scope}: ${removedIds.join(", ")}`,
+            )
+        }
     }
 
     return removed

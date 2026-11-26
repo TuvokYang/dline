@@ -308,6 +308,8 @@ export class Controller {
      * row after the first title sync, so this text titles the tab until then.
      */
     private initialPanelTitle?: { readonly taskId: string; readonly text: string }
+    /** Monotonic guard so a slower title sync cannot overwrite a newer one. */
+    private panelTitleSequence = 0
 
     mcpHub: McpHub
     readonly mcpOwnerId = randomUUID()
@@ -2566,18 +2568,28 @@ export class Controller {
             return
         }
         const session = this.task
+        // Same fallback as buildState: the task state can be empty while the
+        // checklist still exists as the last task_progress row. Without it the tab
+        // and the chat rendered different progress for the same task.
+        const { getLastTaskProgressText } = await import("@shared/getApiMetrics")
+        const checklist =
+            session?.owners.toolState.currentFocusChainChecklist ??
+            getLastTaskProgressText(this.historyDisplaySession?.getMessages() ?? [])
         const resolvedTitle = resolveTaskPanelTitle({
             taskRow: session?.owners.messages.clineMessages.find((message) => message.say === "task")?.text,
             initialTask: session && this.initialPanelTitle?.taskId === session.taskId ? this.initialPanelTitle.text : undefined,
             historyTask: this.historyDisplaySession?.historyItem.task,
-            checklist: session?.owners.toolState.currentFocusChainChecklist ?? null,
+            checklist,
         })
+        // Concurrent syncs can finish out of order; only the newest may write.
+        const sequence = ++this.panelTitleSequence
         try {
             const { WebviewProviderRegistry } = await import("@/core/webview/WebviewProviderRegistry")
             const { VscodeWebviewPanelProvider } = await import("@/hosts/vscode/VscodeWebviewPanelProvider")
             const panels = WebviewProviderRegistry.getPanels()
             for (const provider of panels) {
                 if (provider instanceof VscodeWebviewPanelProvider && provider.hasController() && provider.controller === this) {
+                    if (sequence !== this.panelTitleSequence) return
                     provider.updateTitle(resolvedTitle)
                     // The title is derived from the user's task text, so only its size is logged.
                     Logger.debug(`[Controller] Panel title synced: chars=${resolvedTitle.length}`)

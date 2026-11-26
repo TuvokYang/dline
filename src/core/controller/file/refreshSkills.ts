@@ -16,7 +16,7 @@ import { HostProvider } from "@/hosts/host-provider"
 import { recordPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
 import { Logger } from "@/shared/services/Logger"
-import { fileExistsAtPath, isDirectory } from "@/utils/fs"
+import { isDirectory } from "@/utils/fs"
 import { Controller } from ".."
 import { rememberDiscoveredToggles } from "./capability-discovery-cache"
 import { coalesceCapabilityScan } from "./refresh-coalescing"
@@ -28,23 +28,58 @@ import { coalesceCapabilityScan } from "./refresh-coalescing"
  * complete answer ("no skills here"), but an unreadable one is not: treating
  * the two alike would let a transient failure look like a deletion.
  */
+/**
+ * Stat one entry, separating "absent" from "could not tell".
+ *
+ * `fileExistsAtPath` collapses every failure into false, so a permission or IO
+ * error would look like a deleted skill and let pruning drop the preference.
+ */
+async function statEntry(entryPath: string): Promise<Awaited<ReturnType<typeof fs.stat>> | "unknown" | undefined> {
+    try {
+        return await fs.stat(entryPath)
+    } catch (error) {
+        return (error as NodeJS.ErrnoException).code === "ENOENT" ? undefined : "unknown"
+    }
+}
+
 async function scanSkillsDirectory(dirPath: string): Promise<CapabilityScanResult<SkillInfo>> {
     const skills: SkillInfo[] = []
 
-    if (!(await fileExistsAtPath(dirPath)) || !(await isDirectory(dirPath))) {
+    // "Missing" is a complete answer; "could not tell" is not. utils/fs collapses
+    // every failure into false, which would report an unreadable directory as an
+    // empty one and let orphan pruning delete overrides for skills that still exist.
+    try {
+        await fs.stat(dirPath)
+    } catch (error) {
+        return (error as NodeJS.ErrnoException).code === "ENOENT" ? completeScan(skills) : incompleteScan(skills)
+    }
+    if (!(await isDirectory(dirPath))) {
         return completeScan(skills)
     }
 
+    let complete = true
     try {
         const entries = await fs.readdir(dirPath)
 
         for (const entryName of entries) {
             const entryPath = path.join(dirPath, entryName)
-            const stats = await fs.stat(entryPath).catch(() => null)
+            const stats = await statEntry(entryPath)
+            // Only a confirmed non-directory is a complete answer. An entry whose
+            // type could not be read may still hold a skill, so the scan must not
+            // claim to be authoritative; otherwise pruning deletes the preference.
+            if (stats === "unknown") {
+                complete = false
+                continue
+            }
             if (!stats?.isDirectory()) continue
 
             const skillMdPath = path.join(entryPath, "SKILL.md")
-            if (!(await fileExistsAtPath(skillMdPath))) continue
+            const skillMd = await statEntry(skillMdPath)
+            if (skillMd === "unknown") {
+                complete = false
+                continue
+            }
+            if (!skillMd) continue
 
             try {
                 const fileContent = await fs.readFile(skillMdPath, "utf-8")
@@ -54,10 +89,21 @@ async function scanSkillsDirectory(dirPath: string): Promise<CapabilityScanResul
                 }
                 const frontmatter = result.data
 
-                // Validate required fields
-                if (!frontmatter.name || typeof frontmatter.name !== "string") continue
-                if (!frontmatter.description || typeof frontmatter.description !== "string") continue
-                if (frontmatter.name !== entryName) continue
+                // The file exists but does not currently satisfy the schema. That is
+                // not evidence of deletion: dropping it from the discovered set would
+                // delete the "disabled" preference the user set earlier.
+                if (!frontmatter.name || typeof frontmatter.name !== "string") {
+                    complete = false
+                    continue
+                }
+                if (!frontmatter.description || typeof frontmatter.description !== "string") {
+                    complete = false
+                    continue
+                }
+                if (frontmatter.name !== entryName) {
+                    complete = false
+                    continue
+                }
 
                 skills.push(
                     SkillInfo.create({
@@ -68,7 +114,9 @@ async function scanSkillsDirectory(dirPath: string): Promise<CapabilityScanResul
                     }),
                 )
             } catch {
-                // Skip invalid skills
+                // A skill that exists but cannot be read is not evidence that it was
+                // deleted, so the scan stops being authoritative for pruning.
+                complete = false
             }
         }
     } catch (error) {
@@ -76,7 +124,7 @@ async function scanSkillsDirectory(dirPath: string): Promise<CapabilityScanResul
         return incompleteScan(skills)
     }
 
-    return completeScan(skills)
+    return complete ? completeScan(skills) : incompleteScan(skills)
 }
 
 /**

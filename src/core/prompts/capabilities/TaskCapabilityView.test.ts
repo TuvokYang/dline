@@ -53,7 +53,6 @@ describe("projectTaskCapabilityView", () => {
         if (!localSkill) throw new Error("local skill fixture missing")
         const currentTaskToggles = createTaskCapabilityToggles({ localSkillsToggles: { [localSkill]: true } })
         const stateManager = {
-            hasNormalizedCapabilityKeys: true,
             getScopedCapabilityToggles: vi.fn((scope: string, key: string) => {
                 if (scope === "workspace" && key === "workspaceSkillsToggles") return { [localSkill]: false }
                 return {}

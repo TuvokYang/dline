@@ -34,7 +34,6 @@
 
 import { isSettingsKey } from "@shared/storage/state-keys"
 import type * as vscode from "vscode"
-import { LEGACY_WORKSPACE_STATE_KEYS } from "@/core/storage/settings/capability-toggle-migration"
 import { Logger } from "@/shared/services/Logger"
 import { GlobalStateAndSettingKeys, LocalStateKeys, SecretKeys } from "@/shared/storage/state-keys"
 import type { StorageContext } from "@/shared/storage/storage-context"
@@ -186,10 +185,7 @@ export async function exportVSCodeStorageToSharedFiles(
         // ─── 2. Migrate workspace state (if needed) ────────────────────
         if (needWorkspaceMigration) {
             // Batch workspace state keys
-            // Keys that a previous build wrote must be transferred even after they
-            // leave `LocalStateKeys`; the capability toggle migration reads them
-            // afterwards, and skipping them would silently drop stored preferences.
-            const workspaceKeys = new Set<string>([...LocalStateKeys, ...LEGACY_WORKSPACE_STATE_KEYS])
+            const workspaceKeys = new Set<string>(LocalStateKeys)
             const workspaceStateBatch: Record<string, any> = {}
             for (const key of workspaceKeys) {
                 const vscodeValue = vscodeContext.workspaceState.get(key)

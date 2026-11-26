@@ -343,14 +343,16 @@ describe("SubagentRow independent capability editor", () => {
         expect(stored.get(agent.path)?.workflows).toEqual(["e2e-validation"])
     })
 
-    it("reads on expansion only and searches all five keyboard tabs without mutating hidden choices", async () => {
+    it("loads the tool directory on mount, reads capabilities on expansion, and searches all five keyboard tabs", async () => {
         const agent = makeAgent({ skills: ["use-vitest"] })
         mount(agent)
-        expect(FileServiceClient.getAvailableTools).not.toHaveBeenCalled()
+        // The tool summary is always visible, so its directory cannot wait for expansion.
+        expect(FileServiceClient.getAvailableTools).toHaveBeenCalledTimes(1)
         expect(FileServiceClient.getSubagentCapabilities).not.toHaveBeenCalled()
         expect(screen.getByRole("button", { name: /Configure subagent/ })).toHaveAttribute("aria-expanded", "false")
         await expand()
         expect(FileServiceClient.getSubagentCapabilities).toHaveBeenCalledTimes(1)
+        expect(FileServiceClient.getAvailableTools).toHaveBeenCalledTimes(1)
         expect(FileServiceClient.getSubagentCapabilities).toHaveBeenCalledWith({ subagentPath: agent.path })
         expect(screen.getAllByRole("tab")).toHaveLength(5)
         expect(screen.getByRole("combobox", { name: "Profile" })).toHaveValue("profile-a")
