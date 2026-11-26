@@ -32,7 +32,12 @@ import { getProfileCatalogRevision } from "@core/profiles/profile-catalog-state"
 import { settingsAffectPromptFreshness } from "@core/prompts/system-prompt-cache/PromptFreshnessProjection"
 import * as SecretsManager from "@core/storage/secrets"
 import { capabilityResourceId } from "@core/storage/settings/capability-resource-id"
-import { type CapabilityKind, mergeScopedToggles, readScopedToggles } from "@core/storage/settings/capability-toggle-store"
+import {
+    type CapabilityKind,
+    capabilityToggleSettingsKey,
+    mergeScopedToggles,
+    readScopedToggles,
+} from "@core/storage/settings/capability-toggle-store"
 import { detectWorkspaceRoots } from "@core/workspace/detection"
 import { setupWorkspaceManager } from "@core/workspace/setup"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
@@ -124,7 +129,7 @@ import { approvalInteractionId } from "../task/tools/approval-interaction"
 import { KernelTaskViewPort } from "../task/view/KernelTaskViewPort"
 import { type OpeningTrajectoryAccess, openingTrajectoryAccess } from "../trajectory/OpeningTrajectoryAccess"
 import { TrajectoryAdmission } from "../trajectory/TrajectorySource"
-import { readDiscoveredToggles } from "./file/capability-discovery-cache"
+import { hasDiscoveredTogglesSnapshot, readDiscoveredToggles } from "./file/capability-discovery-cache"
 import {
     getWorkspaceHistoryManager,
     type WorkspaceHistoryManager,
@@ -386,22 +391,48 @@ export class Controller {
      */
     private getInheritedTaskCapabilityToggles(): TaskCapabilityToggles {
         return createTaskCapabilityToggles({
-            globalClineRulesToggles: this.stateManager.getGlobalSettingsKey("globalClineRulesToggles") || {},
+            globalClineRulesToggles: this.readGlobalCapabilityToggles("rules"),
             localClineRulesToggles: this.readLocalCapabilityToggles("rules"),
             localCursorRulesToggles: this.readLocalCapabilityToggles("cursorRules"),
             localWindsurfRulesToggles: this.readLocalCapabilityToggles("windsurfRules"),
             localAgentsRulesToggles: this.readLocalCapabilityToggles("agentsRules"),
-            globalWorkflowToggles: this.stateManager.getGlobalSettingsKey("globalWorkflowToggles") || {},
+            globalWorkflowToggles: this.readGlobalCapabilityToggles("workflows"),
             localWorkflowToggles: this.readLocalCapabilityToggles("workflows"),
-            globalSkillsToggles: this.stateManager.getGlobalSettingsKey("globalSkillsToggles") || {},
+            globalSkillsToggles: this.readGlobalCapabilityToggles("skills"),
             localSkillsToggles: this.readLocalCapabilityToggles("skills"),
             remoteSkillsToggles: this.stateManager.getGlobalStateKey("remoteSkillsToggles") || {},
             remoteRulesToggles: this.stateManager.getGlobalStateKey("remoteRulesToggles") || {},
             remoteWorkflowToggles: this.stateManager.getGlobalStateKey("remoteWorkflowToggles") || {},
-            globalSubagentsToggles: this.stateManager.getGlobalSettingsKey("globalSubagentsToggles") || {},
+            globalSubagentsToggles: this.readGlobalCapabilityToggles("subagents"),
             localSubagentsToggles: this.readLocalCapabilityToggles("subagents"),
             mcpServers: Object.fromEntries(this.getMcpServersForOwner().map((server) => [server.name, server.disabled !== true])),
         })
+    }
+
+    /**
+     * Resolve the effective state of every globally discovered resource of one kind.
+     *
+     * Global preferences in Settings are sparse overrides just like workspace overrides;
+     * publishing the raw override map on every state push would wipe discovered global
+     * rules, workflows and skills back to `{}` whenever a task resumes or updates state.
+     */
+    private readGlobalCapabilityToggles(kind: CapabilityKind): Record<string, boolean> {
+        const controller = this as unknown as Controller
+        if (!hasDiscoveredTogglesSnapshot(controller, kind, "global")) {
+            return (
+                (this.stateManager.getGlobalSettingsKey(capabilityToggleSettingsKey(kind, "global")) as
+                    | Record<string, boolean>
+                    | undefined) || {}
+            )
+        }
+        const overrides = mergeScopedToggles(readScopedToggles(this.stateManager, kind))
+        const discovered = readDiscoveredToggles(controller, kind, "global")
+        const resolved: Record<string, boolean> = {}
+        for (const [resourcePath, enabled] of Object.entries(discovered)) {
+            const id = capabilityResourceId(resourcePath)
+            resolved[resourcePath] = overrides[id] ?? overrides[resourcePath] ?? enabled
+        }
+        return resolved
     }
 
     /**
@@ -3220,9 +3251,9 @@ export class Controller {
         const errorReportingSetting = this.stateManager.getGlobalSettingsKey("errorReportingSetting")
         const planActSeparateModelsSetting = this.stateManager.getGlobalSettingsKey("planActSeparateModelsSetting")
         const enableCheckpointsSetting = this.stateManager.getGlobalSettingsKey("enableCheckpointsSetting")
-        const globalClineRulesToggles = this.stateManager.getGlobalSettingsKey("globalClineRulesToggles")
-        const globalWorkflowToggles = this.stateManager.getGlobalSettingsKey("globalWorkflowToggles")
-        const globalSkillsToggles = this.stateManager.getGlobalSettingsKey("globalSkillsToggles")
+        const globalClineRulesToggles = this.readGlobalCapabilityToggles("rules")
+        const globalWorkflowToggles = this.readGlobalCapabilityToggles("workflows")
+        const globalSkillsToggles = this.readGlobalCapabilityToggles("skills")
         const taskCapabilityToggles = parseTaskCapabilityToggles(this.task?.owners.settings.taskCapabilityToggles)
         const localSkillsToggles = this.readLocalCapabilityToggles("skills")
         const remoteSkillsToggles = this.stateManager.getGlobalStateKey("remoteSkillsToggles")

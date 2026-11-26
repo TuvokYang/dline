@@ -174,7 +174,7 @@ export class MessageStateCompactionCards implements CompactionProgressPort, Comp
         const ts = this.handedOver.get(operationId)
         this.handedOver.delete(operationId)
         if (ts === undefined) return undefined
-        return this.messages.clineMessages.some((message) => message.ts === ts) ? ts : undefined
+        return this.hasRow(ts) ? ts : undefined
     }
 
     /** Write a completed step the run builds on as a card of its own. */
@@ -254,8 +254,13 @@ export class MessageStateCompactionCards implements CompactionProgressPort, Comp
         const [latest, ...older] = shown
         for (const { existingTs } of older) this.messages.removeTransientClineMessage(existingTs)
         if (!latest) return undefined
-        const onScreen = this.messages.clineMessages.some((message) => message.ts === latest.existingTs)
+        const onScreen = this.hasRow(latest.existingTs)
         return onScreen ? latest : { ...latest, existingTs: undefined }
+    }
+
+    private hasRow(ts: number): boolean {
+        if (typeof this.messages.hasClineMessage === "function") return this.messages.hasClineMessage(ts)
+        return this.messages.clineMessages.some((message) => message.ts === ts)
     }
 
     private transientUnits(operationId: string): (ContextCompactionPresentationSnapshot & { existingTs: number })[] {

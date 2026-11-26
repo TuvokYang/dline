@@ -126,4 +126,50 @@ describe("TaskActivityPersistence over activities.db", () => {
         await intruder.close()
         await owner.close()
     })
+
+    it("hydrates only bounded recent rows without skipping equal-timestamp ties and supports loadById for older rows", async () => {
+        const writer = new TaskActivityPersistence("task-bounded-read")
+        const seeded: TaskActivityRecord[] = []
+        // 12 rows sharing the exact same timestamp test keyset tie handling across batch boundaries (batch size 8).
+        for (let i = 0; i < 12; i++) {
+            seeded.push({
+                ...activity("task-bounded-read", `tie-${String(i).padStart(2, "0")}`, `Tie ${i}`),
+                createdAt: 1000,
+                updatedAt: 1000,
+            })
+        }
+        // Older rows well below the tie timestamp.
+        for (let i = 0; i < 15; i++) {
+            seeded.push({
+                ...activity("task-bounded-read", `old-${String(i).padStart(2, "0")}`, `Old ${i}`),
+                createdAt: 500 + i,
+                updatedAt: 500 + i,
+                output: "x".repeat(4096),
+            })
+        }
+        await writer.upsert(seeded)
+        await writer.close()
+
+        const store = await TaskActivityRowStore.open("task-bounded-read")
+        const limited = await store.readRecent({ limit: 15, byteBudget: 1024 * 1024 })
+        // All 12 equal-timestamp ties come first in ascending activityId order, followed by newest old rows.
+        expect(limited.map((row) => row.activityId)).toEqual([
+            ...Array.from({ length: 12 }, (_, i) => `tie-${String(i).padStart(2, "0")}`),
+            "old-14",
+            "old-13",
+            "old-12",
+        ])
+
+        // Byte budget stops scanning once accumulated payload exceeds budget (while always returning at least 1 row).
+        const byteBounded = await store.readRecent({ limit: 100, byteBudget: 10_000 })
+        expect(byteBounded.length).toBeGreaterThanOrEqual(1)
+        expect(byteBounded.length).toBeLessThan(seeded.length)
+        await store.close()
+
+        // An activity outside the recent window is still retrievable on demand by primary key.
+        const reader = new TaskActivityPersistence("task-bounded-read")
+        expect((await reader.loadById("old-00"))?.title).toBe("Old 0")
+        expect(await reader.loadById("does-not-exist")).toBeUndefined()
+        await reader.close()
+    })
 })

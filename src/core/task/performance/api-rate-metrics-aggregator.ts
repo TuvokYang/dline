@@ -15,9 +15,9 @@ const RESOLUTION_SECONDS = {
     day: 24 * 60 * 60,
 } as const
 const SECONDS_PER_MINUTE = 60
-const RAW_SECOND_RETENTION_SECONDS = 48 * 60 * 60
-const MINUTE_RETENTION_SECONDS = 30 * 24 * 60 * 60
-const HOUR_RETENTION_SECONDS = 365 * 24 * 60 * 60
+export const RAW_SECOND_RETENTION_SECONDS = 48 * 60 * 60
+export const MINUTE_RETENTION_SECONDS = 30 * 24 * 60 * 60
+export const HOUR_RETENTION_SECONDS = 365 * 24 * 60 * 60
 const RESOLUTION_RANK: Record<ApiRateMetricsResolution, number> = { minute: 1, hour: 2, day: 3 }
 
 interface BucketAccumulator {

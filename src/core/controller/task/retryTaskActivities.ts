@@ -26,6 +26,10 @@ export async function retryTaskActivities(
     await task.owners.activities.hydrate()
     if (controller.task !== task) return RetryTaskActivitiesResponse.create({ retriedActivityIds: [] })
     for (const activityId of request.activityIds) {
+        if (!task.owners.activities.hasLiveRetryControl(activityId) && !task.owners.activities.isRetryable(activityId)) {
+            await task.owners.activities.ensureLoaded?.(activityId)
+            if (controller.task !== task) return RetryTaskActivitiesResponse.create({ retriedActivityIds: [] })
+        }
         if (!task.owners.activities.hasLiveRetryControl(activityId) && task.owners.activities.isRetryable(activityId)) {
             await task.owners.toolExecution.restoreSubagentActivityRetry(activityId)
         }

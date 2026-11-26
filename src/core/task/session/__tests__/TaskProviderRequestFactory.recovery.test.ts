@@ -345,4 +345,36 @@ describe("TaskProviderRequestFactory restored New Task approval", () => {
 
         expect(h.authority.read("turn-1")).toBeUndefined()
     })
+
+    it("does not materialize conversation entries on open when no new_task call awaits approval", async () => {
+        const journal = new InMemoryConversationJournal()
+        const payloads = new InMemoryTaskPayloadStore()
+        const materializer = new ProviderJournalMessageMaterializer(payloads)
+        const conversation = new JournalConversationView(journal, materializer)
+        const entriesSpy = vi.spyOn(conversation, "entries")
+        const authority = new TaskTurnAuthority()
+        const factory = new TaskProviderRequestFactory({
+            taskId: "task-1",
+            conversation,
+            messages: materializer,
+            authority,
+            api: { rebuild: vi.fn(async () => undefined), current: vi.fn() },
+        } as unknown as TaskProviderRequestFactoryOptions)
+        const idleState = {
+            turn: {
+                turnId: "turn-1",
+                mode: "serial",
+                blocks: [],
+                manualApprovalBlockIds: [],
+                automaticApprovalBlockIds: [],
+                executingBlockIds: [],
+            },
+            dialog: { approvalsByBlock: {} },
+        } as unknown as TaskState
+
+        await factory.restoreNewTaskApproval(idleState, payloads)
+
+        expect(entriesSpy).not.toHaveBeenCalled()
+        expect(authority.read("turn-1")).toBeUndefined()
+    })
 })

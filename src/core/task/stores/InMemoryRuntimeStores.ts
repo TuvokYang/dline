@@ -137,6 +137,10 @@ export class InMemoryConversationJournal implements ConversationJournal {
         return this.ensureProjection().project(through)
     }
 
+    async canRewindTo(target: JournalWatermark): Promise<boolean> {
+        return this.ensureProjection().canRewindTo(target)
+    }
+
     appendTransient(transientId: string): void {
         this.transient.add(transientId)
     }

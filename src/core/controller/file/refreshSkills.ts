@@ -175,6 +175,7 @@ async function scanSkills(controller: Controller): Promise<RefreshedSkills> {
     // them back. Remote entries use a separate name-keyed map and are handled below.
     const discoveredGlobalToggles = Object.fromEntries(globalSkills.map((skill) => [skill.path, true]))
     const globalToggles = resolveCapabilityToggles(controller.stateManager, "skills", discoveredGlobalToggles)
+    rememberDiscoveredToggles(controller, "skills", discoveredGlobalToggles, globalScan.complete, "global")
     for (const skill of globalSkills) {
         skill.enabled = globalToggles[skill.path] !== false
     }

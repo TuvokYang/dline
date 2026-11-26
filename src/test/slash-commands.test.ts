@@ -359,6 +359,32 @@ describe("getAvailableSlashCommands", () => {
             JSON.stringify(response.commands).includes(skillPath).should.be.false()
             response.commands.some((command) => command.name === "SKILL").should.be.false()
         })
+
+        it("resolves discovered global skills from global discovery even when sparse global overrides are empty", async () => {
+            const root = await mkdtemp(path.join(tmpdir(), "dline-slash-global-skill-"))
+            temporaryDirectories.push(root)
+            const enabledSkillDir = path.join(root, "enabled-skill")
+            const disabledSkillDir = path.join(root, "disabled-skill")
+            const enabledSkillPath = path.join(enabledSkillDir, "SKILL.md")
+            const disabledSkillPath = path.join(disabledSkillDir, "SKILL.md")
+            await mkdir(enabledSkillDir, { recursive: true })
+            await mkdir(disabledSkillDir, { recursive: true })
+            await writeFile(enabledSkillPath, "---\nname: global-enabled\n---\nBody", "utf8")
+            await writeFile(disabledSkillPath, "---\nname: global-disabled\n---\nBody", "utf8")
+
+            mockStateManager.getGlobalSettingsKey.mockReturnValue({})
+            mockStateManager.getGlobalStateKey.mockImplementation((key: string) =>
+                key === "discoveredGlobalSkillsToggles" ? { [enabledSkillPath]: true, [disabledSkillPath]: true } : {},
+            )
+            mockStateManager.getScopedCapabilityToggles.mockImplementation((scope: string, settingsKey: string) =>
+                scope === "global" && settingsKey === "globalSkillsToggles" ? { [disabledSkillPath]: false } : {},
+            )
+
+            const response = await getAvailableSlashCommands(mockController as Controller, EmptyRequest.create())
+
+            response.commands.some((command) => command.name === "global-enabled" && command.section === "skill").should.be.true()
+            response.commands.some((command) => command.name === "global-disabled").should.be.false()
+        })
     })
 
     describe("Skill Deduplication", () => {

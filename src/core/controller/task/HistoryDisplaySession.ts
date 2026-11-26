@@ -133,14 +133,16 @@ export class HistoryDisplaySession {
         }
         this.messageReader = reader
         try {
-            const [latestMessages, snapshot, taskTitlePage, performance, focusChainHistory] = await Promise.all([
+            // Metrics are the only input here whose read is proportional to the
+            // task's whole request history, so they must not hold the first frame.
+            // The surface is drawn from the snapshot, the latest window and the
+            // activity gate; `maintain` loads the metrics once it is out.
+            const [latestMessages, snapshot, taskTitlePage, focusChainHistory] = await Promise.all([
                 reader.getLatest(HISTORY_MESSAGE_WINDOW_SIZE),
                 this.readSnapshot(),
                 reader.getPage(0, 1),
-                this.openMetrics(),
                 this.readFocusChainHistory(),
             ])
-            this.performance = performance
             this.focusChainHistory = focusChainHistory
             if (this.disposed) {
                 await this.releaseMetrics()
@@ -395,6 +397,17 @@ export class HistoryDisplaySession {
      */
     private async maintain(options?: HistoryDisplayLoadOptions): Promise<void> {
         try {
+            // Metrics are loaded here, after the first frame, because their read is
+            // proportional to the task's whole request history. A resumed surface
+            // redraws once they arrive; nothing the first frame draws needs them.
+            const performance = await this.openMetrics()
+            if (this.disposed) {
+                await performance?.release()
+                return
+            }
+            this.performance = performance
+            if (performance) await options?.onMaintained?.([])
+
             // Give an immediate Resume priority before any large activity query can
             // occupy the extension host. The active Task hydrates the same durable
             // history after its provider request reaches the wire.

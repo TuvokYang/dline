@@ -3,7 +3,7 @@ import { TaskActivitySubscriptionRequest, TaskActivityUpdate } from "@shared/pro
 import { describe, expect, it, vi } from "vitest"
 import { TaskActivityStore } from "../../../task/activity/TaskActivityStore"
 import { getRequestRegistry } from "../../grpc-handler"
-import { subscribeToTaskActivities } from "../subscribeToTaskActivities"
+import { boundSnapshotActivitiesForWire, subscribeToTaskActivities } from "../subscribeToTaskActivities"
 
 type Opening = { readonly taskId: string; readonly taskInstanceId: string }
 
@@ -253,5 +253,49 @@ describe("subscribeToTaskActivities", () => {
         })
         expect(activity?.events.find((event) => event.text === "first attempt")?.attempt).toBe(1)
         expect(activity?.events.find((event) => event.text === "second attempt")?.attempt).toBe(2)
+    })
+
+    it("compacts oldest terminal activities before active ones when a snapshot exceeds the wire byte budget", () => {
+        const makeRecord = (id: string, status: "running" | "completed", createdAt: number) => ({
+            schemaVersion: 2 as const,
+            activityId: id,
+            taskId: "task-wire-budget",
+            kind: "subagent" as const,
+            executionMode: "background" as const,
+            cancellationOwner: "task" as const,
+            status,
+            currentAttempt: 1,
+            createdAt,
+            updatedAt: createdAt,
+            title: id,
+            output: "o".repeat(20_000),
+            events: Array.from({ length: 40 }, (_, i) => ({
+                kind: "output" as const,
+                sequence: i + 1,
+                timestamp: createdAt + i,
+                attempt: 1,
+                text: "e".repeat(4_000),
+            })),
+        })
+
+        // Newest-first order: newest completed, active running, and older completed records.
+        const input = [
+            makeRecord("newest-done", "completed", 300),
+            makeRecord("active-run", "running", 200),
+            makeRecord("older-done-1", "completed", 100),
+            makeRecord("older-done-2", "completed", 50),
+        ]
+
+        // Small budget forces compaction of terminal records while keeping the active record untouched.
+        const bounded = boundSnapshotActivitiesForWire(input, 260_000)
+        const active = bounded.find((item) => item.activityId === "active-run")
+        const oldest = bounded.find((item) => item.activityId === "older-done-2")
+
+        expect(active?.events).toHaveLength(40)
+        expect(active?.output?.length).toBe(20_000)
+        if (oldest) {
+            expect(oldest.events.length).toBeLessThanOrEqual(20)
+            expect(oldest.output?.length ?? 0).toBeLessThanOrEqual(8 * 1024)
+        }
     })
 })

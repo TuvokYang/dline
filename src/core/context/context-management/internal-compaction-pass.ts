@@ -102,6 +102,7 @@ export interface RunInternalCompactionPassWithRetryInput
 
 class CompactionPresentationQueue {
     private queue: Array<() => void | Promise<void>> = []
+    private head = 0
     private drainPromise: Promise<void> | undefined
     private failed = false
     private failure: unknown
@@ -125,8 +126,15 @@ class CompactionPresentationQueue {
 
     private async drain(): Promise<void> {
         try {
-            while (this.queue.length > 0) {
-                const operation = this.queue.shift()
+            while (this.head < this.queue.length) {
+                const operation = this.queue[this.head++]
+                if (this.head === this.queue.length) {
+                    this.queue = []
+                    this.head = 0
+                } else if (this.head >= 64 && this.head * 2 >= this.queue.length) {
+                    this.queue = this.queue.slice(this.head)
+                    this.head = 0
+                }
                 if (!operation) continue
                 try {
                     await operation()
@@ -134,6 +142,7 @@ class CompactionPresentationQueue {
                     this.failed = true
                     this.failure = error
                     this.queue = []
+                    this.head = 0
                     return
                 }
             }
@@ -142,6 +151,15 @@ class CompactionPresentationQueue {
         }
     }
 }
+
+/**
+ * Minimum interval between streamed compaction summary parses/publishes after the first snapshot.
+ *
+ * A long summary streams tens of thousands of tiny SSE chunks. Re-parsing the full accumulated reply
+ * and shipping the full summary payload on every chunk turns a single compaction into O(L^2) CPU work
+ * that freezes the entire extension host.
+ */
+const SUMMARY_UPDATE_INTERVAL_MS = 100
 
 /**
  * Execute one compaction Provider request without ordinary UI or history side effects.
@@ -183,20 +201,68 @@ export async function runInternalCompactionPass(input: RunInternalCompactionPass
     let usageReported = false
     const presentationQueue = new CompactionPresentationQueue()
     let lastPublishedSummary: string | undefined
+    let lastSummaryPublishAtMs = Number.NEGATIVE_INFINITY
     let summaryUpdateQueued = false
-    // Each summary update ships the whole summary to the Webview and waits for delivery, so queueing
-    // one per text chunk lets the card replay stale snapshots long after the Provider has finished.
-    // Keep at most one update queued and read the latest reply text only when it runs.
-    const scheduleSummaryUpdate = (): void => {
+    let summaryUpdateInFlight = false
+    let summaryUpdatePending = false
+    let streamFinished = false
+    let summaryUpdateTimer: ReturnType<typeof setTimeout> | undefined
+    const clearSummaryUpdateTimer = (): void => {
+        if (summaryUpdateTimer !== undefined) {
+            clearTimeout(summaryUpdateTimer)
+            summaryUpdateTimer = undefined
+        }
+    }
+    const armSummaryUpdateTimer = (): void => {
+        if (summaryUpdateTimer !== undefined || streamFinished) return
+        const elapsedMs = performance.now() - lastSummaryPublishAtMs
+        const delayMs = Math.max(1, Math.ceil(SUMMARY_UPDATE_INTERVAL_MS - elapsedMs))
+        summaryUpdateTimer = setTimeout(() => {
+            summaryUpdateTimer = undefined
+            if (summaryUpdatePending && !summaryUpdateQueued && !summaryUpdateInFlight) enqueueSummaryPublish()
+        }, delayMs)
+    }
+    const enqueueSummaryPublish = (): void => {
         if (!input.onSummaryUpdate || summaryUpdateQueued) return
         summaryUpdateQueued = true
-        presentationQueue.enqueue(() => {
+        summaryUpdatePending = false
+        presentationQueue.enqueue(async () => {
             summaryUpdateQueued = false
-            const snapshot = parseSummarizeTaskCalls(observation.text).at(-1)?.params.context?.trim()
-            if (!snapshot || snapshot === lastPublishedSummary) return
-            lastPublishedSummary = snapshot
-            return input.onSummaryUpdate?.(snapshot)
+            summaryUpdateInFlight = true
+            try {
+                const snapshot = parseSummarizeTaskCalls(observation.text).at(-1)?.params.context?.trim()
+                if (!snapshot || snapshot === lastPublishedSummary) return
+                lastPublishedSummary = snapshot
+                lastSummaryPublishAtMs = performance.now()
+                await input.onSummaryUpdate?.(snapshot)
+            } finally {
+                summaryUpdateInFlight = false
+                if (summaryUpdatePending && !summaryUpdateQueued && !streamFinished) armSummaryUpdateTimer()
+            }
         })
+    }
+    // Each summary update re-parses the full reply and ships the whole summary to the Webview.
+    // Publish the first snapshot immediately, pace later snapshots by wall-clock cadence, and
+    // coalesce rapid chunks so a single compaction stream never saturates the extension host.
+    const scheduleSummaryUpdate = (): void => {
+        if (!input.onSummaryUpdate) return
+        if (summaryUpdateQueued || summaryUpdateInFlight) {
+            summaryUpdatePending = true
+            return
+        }
+        const elapsedMs = performance.now() - lastSummaryPublishAtMs
+        if (lastPublishedSummary === undefined || elapsedMs >= SUMMARY_UPDATE_INTERVAL_MS) {
+            clearSummaryUpdateTimer()
+            enqueueSummaryPublish()
+            return
+        }
+        summaryUpdatePending = true
+        armSummaryUpdateTimer()
+    }
+    const flushPendingSummaryUpdate = (): void => {
+        streamFinished = true
+        clearSummaryUpdateTimer()
+        if (summaryUpdatePending) enqueueSummaryPublish()
     }
 
     const processChunk = (chunk: ApiProviderStreamChunk | undefined): void => {
@@ -279,10 +345,14 @@ export async function runInternalCompactionPass(input: RunInternalCompactionPass
     }
 
     try {
+        flushPendingSummaryUpdate()
         await presentationQueue.flush()
     } catch (error) {
+        clearSummaryUpdateTimer()
         reportAttempt({ outcome: "failed", failureKind: classifyCompactionFailure(error) })
         throw error
+    } finally {
+        clearSummaryUpdateTimer()
     }
 
     const accepted = findClosedSummarizeTaskCall(observation.text)
@@ -507,10 +577,17 @@ async function settlesWithin(tail: Promise<void>, graceMs: number): Promise<bool
 
 /** True when the streamed reply currently ends with a closed summarize_task call that carries a summary. */
 function endsWithClosedSummarizeTaskCall(text: string): boolean {
-    const settled = text.trimEnd()
-    if (!settled.endsWith(SUMMARIZE_TASK_CLOSE_TAG)) return false
+    let end = text.length
+    while (end > 0 && isTrailingWhitespace(text.charCodeAt(end - 1))) end -= 1
+    if (end < SUMMARIZE_TASK_CLOSE_TAG.length) return false
+    if (!text.startsWith(SUMMARIZE_TASK_CLOSE_TAG, end - SUMMARIZE_TASK_CLOSE_TAG.length)) return false
+    const settled = end === text.length ? text : text.slice(0, end)
     const call = parseSummarizeTaskCalls(settled).at(-1)
     return call !== undefined && !call.partial && Boolean(call.params.context?.trim())
+}
+
+function isTrailingWhitespace(code: number): boolean {
+    return code === 0x20 || code === 0x0a || code === 0x0d || code === 0x09 || code === 0x0c || code === 0x0b || code === 0xfeff
 }
 
 /**

@@ -335,4 +335,50 @@ describe("TaskApiRateMetricsRepository", () => {
         const repository = createRepository({ taskId: "task-a", location })
         await expect(repository.initialize()).rejects.toThrow(ApiRateMetricsFileIntegrityError)
     })
+
+    it("initializes large stores via bounded recent scans without loading every record", async () => {
+        const location = path.join(root, "api_rate_metrics_large_init.db")
+        const writer = createRepository({ taskId: "task-a", location, now: () => 1_000 })
+        await writer.initialize()
+        const batch = Array.from({ length: 2_200 }, (_, index) =>
+            secondRecord(10_000 + index, {
+                effectiveTokens: 100 + index,
+                runningActiveSeconds: index + 1,
+                runningRequestCount: index + 1,
+                runningTokenCount: (index + 1) * 100,
+            }),
+        )
+        await writer.append(batch)
+        await writer.close()
+
+        const reopened = createRepository({ taskId: "task-a", location, readOnly: true })
+        const recovery = await reopened.initialize()
+        expect(recovery.recentRecords).toHaveLength(60)
+        expect(recovery.recentRecords?.[0]?.second).toBe(10_000 + 2_200 - 60)
+        expect(recovery.lastActiveSecond).toBe(10_000 + 2_199)
+    })
+
+    it("backs off instead of rewriting the table repeatedly when records are still inside raw retention", async () => {
+        const location = path.join(root, "api_rate_metrics_no_loop_compaction.db")
+        const repository = createRepository({
+            taskId: "task-a",
+            location,
+            compactionThresholdBytes: 1,
+        })
+        await repository.initialize()
+        await repository.append([
+            secondRecord(10_000, { requestCount: 1, effectiveTokens: 100 }),
+            secondRecord(10_001, { requestCount: 1, effectiveTokens: 200 }),
+        ])
+        await repository.waitForWrites()
+
+        // Records are within the 48h raw retention window, so compaction cannot shrink below threshold.
+        await expect(repository.compactIfNeeded(10_060)).resolves.toBe(false)
+        await expect(repository.compactIfNeeded(10_120)).resolves.toBe(false)
+
+        // Once the retention window passes, compaction runs and then backs off if still above threshold.
+        const afterRetention = 10_000 + 3 * 24 * 60 * 60
+        await expect(repository.compactIfNeeded(afterRetention)).resolves.toBe(true)
+        await expect(repository.compactIfNeeded(afterRetention + 60)).resolves.toBe(false)
+    })
 })

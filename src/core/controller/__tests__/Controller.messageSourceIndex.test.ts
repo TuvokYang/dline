@@ -51,6 +51,7 @@ function controllerFor(messages: MessageStateHandler): Controller {
             revokeAwayMode: async () => snapshot,
         },
         readLocalCapabilityToggles: () => ({}),
+        readGlobalCapabilityToggles: () => ({}),
         ensureWorkspaceManager: async () => undefined,
         projectCurrentTaskViewState: () => undefined,
         modeSwitchCoordinator: { getSnapshot: () => ({}) },

@@ -1,3 +1,4 @@
+import { estimateActivityRecordBytes } from "@core/storage/activities/TaskActivityRowStore"
 import {
     TaskActivity as ProtoTaskActivity,
     TaskActivityEvent as ProtoTaskActivityEvent,
@@ -6,10 +7,86 @@ import {
     TaskActivityUpdate as ProtoTaskActivityUpdate,
     TaskActivitySubscriptionRequest,
 } from "@shared/proto/dline/task"
-import type { TaskActivityRecord, TaskActivityUpdate } from "@shared/task-activity"
+import type { TaskActivityEvent, TaskActivityRecord, TaskActivityUpdate } from "@shared/task-activity"
 import type { Controller } from ".."
 import { getRequestRegistry, type StreamingResponseHandler } from "../grpc-handler"
 import { currentOpening } from "./opened-task"
+
+/** Maximum estimated bytes carried by one initial activity snapshot frame over Webview IPC. */
+export const MAX_ACTIVITY_SNAPSHOT_WIRE_BYTES = 2 * 1024 * 1024
+const COMPACTED_TERMINAL_EVENT_LIMIT = 20
+const COMPACTED_EVENT_TEXT_CHARS = 2 * 1024
+const COMPACTED_TERMINAL_OUTPUT_CHARS = 8 * 1024
+
+function isActiveActivity(activity: TaskActivityRecord): boolean {
+    return activity.status === "awaiting_approval" || activity.status === "running" || activity.status === "cancelling"
+}
+
+function compactEventForWire(event: TaskActivityEvent): TaskActivityEvent {
+    if ("text" in event && typeof event.text === "string" && event.text.length > COMPACTED_EVENT_TEXT_CHARS) {
+        return { ...event, text: event.text.slice(-COMPACTED_EVENT_TEXT_CHARS) }
+    }
+    return event
+}
+
+function compactTerminalActivityForWire(activity: TaskActivityRecord): TaskActivityRecord {
+    const compactedOutput =
+        activity.output && activity.output.length > COMPACTED_TERMINAL_OUTPUT_CHARS
+            ? activity.output.slice(-COMPACTED_TERMINAL_OUTPUT_CHARS)
+            : activity.output
+    const tailEvents =
+        activity.events.length > COMPACTED_TERMINAL_EVENT_LIMIT
+            ? activity.events.slice(-COMPACTED_TERMINAL_EVENT_LIMIT)
+            : activity.events
+    return {
+        ...activity,
+        output: compactedOutput,
+        events: tailEvents.map(compactEventForWire),
+    }
+}
+
+/**
+ * Keep an initial activity snapshot within the Webview IPC budget.
+ *
+ * Normal snapshots fit comfortably and pass through untouched. On large historical
+ * tasks, terminal activities are compacted oldest-first and, if still over budget,
+ * oldest terminal entries are shed while keeping active work and the newest entry.
+ */
+export function boundSnapshotActivitiesForWire(
+    activities: readonly TaskActivityRecord[],
+    byteBudget = MAX_ACTIVITY_SNAPSHOT_WIRE_BYTES,
+): TaskActivityRecord[] {
+    const sizes = activities.map((activity) => estimateActivityRecordBytes(activity))
+    let totalBytes = sizes.reduce((sum, size) => sum + size, 0)
+    if (totalBytes <= byteBudget) return [...activities]
+
+    const result = [...activities]
+    // Compact oldest terminal activities first (list is newest-first).
+    for (let index = result.length - 1; index >= 0 && totalBytes > byteBudget; index--) {
+        const current = result[index]
+        if (isActiveActivity(current)) continue
+        const compacted = compactTerminalActivityForWire(current)
+        const nextBytes = estimateActivityRecordBytes(compacted)
+        if (nextBytes < sizes[index]) {
+            totalBytes -= sizes[index] - nextBytes
+            sizes[index] = nextBytes
+            result[index] = compacted
+        }
+    }
+    if (totalBytes <= byteBudget) return result
+
+    const kept: TaskActivityRecord[] = []
+    let keptBytes = 0
+    for (let index = 0; index < result.length; index++) {
+        const current = result[index]
+        const size = sizes[index]
+        if (index === 0 || isActiveActivity(current) || keptBytes + size <= byteBudget) {
+            kept.push(current)
+            keptBytes += size
+        }
+    }
+    return kept
+}
 
 function toProtoMetrics(metrics: TaskActivityRecord["metrics"]): ProtoTaskActivityMetrics | undefined {
     return metrics
@@ -104,10 +181,11 @@ function toProtoUpdate(
     update: TaskActivityUpdate,
     capabilities: (activityId: string) => { cancellable: boolean; finishable: boolean; retryable: boolean },
 ): ProtoTaskActivityUpdate {
+    const activities = update.snapshot ? boundSnapshotActivitiesForWire(update.activities) : update.activities
     return ProtoTaskActivityUpdate.create({
         sequence: update.sequence,
         snapshot: update.snapshot,
-        activities: update.activities.map((activity) => {
+        activities: activities.map((activity) => {
             const activityCapabilities = capabilities(activity.activityId)
             return toProtoActivity(
                 activity,

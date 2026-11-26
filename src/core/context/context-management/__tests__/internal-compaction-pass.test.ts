@@ -204,4 +204,47 @@ describe("internal compaction Pass", () => {
         expect(updates.length).toBeLessThanOrEqual(2)
         expect(updates.at(-1)).toBe(fullSummary)
     })
+
+    it("paces rapid text bursts instead of re-parsing the full summary on every SSE chunk", async () => {
+        const chunks = Array.from({ length: 1_500 }, (_, index) => `token${index} `)
+        async function* stream(): ApiStream {
+            yield { type: "text", text: "<summarize_task>\n<context>\n" }
+            for (const chunk of chunks) yield { type: "text", text: chunk }
+            yield { type: "text", text: "\n</context>\n</summarize_task>" }
+        }
+        const registry = new ExplicitInstructionRegistry()
+        const instructions = new ExplicitInstructionRequestScope(registry, {
+            requestId: "request-burst",
+            attemptId: "attempt-0",
+        })
+        instructions.register({
+            type: "summarize_task",
+            source: "auto_compaction",
+            targetTool: DlineDefaultTool.SUMMARIZE_TASK,
+            operationId: "operation-burst",
+        })
+        const updates: string[] = []
+
+        const startedAt = performance.now()
+        const result = await runInternalCompactionPass({
+            api: createApi(stream()),
+            providerInput: {
+                systemPrompt: "system",
+                messages: [{ role: "user", content: [{ type: "text", text: "history" }] }],
+                tools: [],
+                serverTools: [],
+            },
+            explicitInstructions: instructions,
+            onSummaryUpdate: (context) => {
+                updates.push(context)
+            },
+        })
+        const elapsedMs = performance.now() - startedAt
+
+        const expected = chunks.join("").trim()
+        expect(result.summary).toBe(expected)
+        expect(updates.length).toBeLessThanOrEqual(5)
+        expect(updates.at(-1)).toBe(expected)
+        expect(elapsedMs).toBeLessThan(1_000)
+    })
 })

@@ -30,14 +30,15 @@ export interface RestoredNewTaskApproval {
  */
 export async function locateRestoredNewTaskApproval(
     state: Readonly<TaskState>,
-    entries: readonly ConversationViewEntry[],
+    entries: readonly ConversationViewEntry[] | (() => Promise<readonly ConversationViewEntry[]>),
     payloads: TaskPayloadStore,
 ): Promise<RestoredNewTaskApproval | undefined> {
     const turnId = state.turn.turnId
     if (turnId === undefined) return undefined
     const block = await soleAwaitingNewTaskBlock(state, payloads)
     if (!block || !ownsKernelApproval(state, turnId, block)) return undefined
-    const replies = entries.filter(
+    const resolvedEntries = typeof entries === "function" ? await entries() : entries
+    const replies = resolvedEntries.filter(
         (item) =>
             item.kind === "provider_final" &&
             item.entry.causation?.turnId === turnId &&

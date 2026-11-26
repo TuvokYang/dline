@@ -7,6 +7,7 @@ import type { ContextWindowIndicatorSnapshot } from "@shared/context-window-indi
 import type { ExtensionState, UiMessage } from "@shared/ExtensionMessage"
 import { SETTINGS_DEFAULTS } from "@shared/storage/state-keys"
 import { describe, expect, it, vi } from "vitest"
+import { rememberDiscoveredToggles } from "../file/capability-discovery-cache"
 import { Controller } from "../index"
 
 // Disk boundary spies: buildState must never fall back to re-reading
@@ -110,6 +111,7 @@ function createFakeController(messages: UiMessage[]): Record<string, unknown> {
         // header assertions below do not depend on discovery, so an empty result
         // keeps the double focused on message sourcing.
         readLocalCapabilityToggles: () => ({}),
+        readGlobalCapabilityToggles: () => ({}),
         // The task-view projection
         // canonical runtime state that this focused double intentionally omits.
         projectCurrentTaskViewState: () => undefined,
@@ -198,6 +200,40 @@ describe("buildState header sourcing", () => {
         expect(state.taskTitleMessage?.text).toBe(HEADER_TEXT)
         expect(state.totalMessageCount).toBe(50)
         expect(state.firstItemIndex).toBe(0)
+    })
+
+    it("publishes discovered global capabilities with sparse overrides instead of wiping them to empty maps", async () => {
+        const globalSkill = "/home/user/Documents/dline/skills/review/SKILL.md"
+        const disabledGlobalSkill = "/home/user/Documents/dline/skills/muted/SKILL.md"
+        const globalRule = "/home/user/Documents/dline/rules/coding.md"
+        const fakeController = createFakeController([])
+        const stateManager = fakeController.stateManager as Record<string, unknown>
+        stateManager.getGlobalSettingsKey = () => ({})
+        stateManager.setGlobalState = vi.fn()
+        stateManager.getScopedCapabilityToggles = (scope: string, key: string) =>
+            scope === "global" && key === "globalSkillsToggles" ? { [disabledGlobalSkill]: false } : {}
+        fakeController.readGlobalCapabilityToggles = (
+            Controller.prototype as unknown as Record<string, unknown>
+        ).readGlobalCapabilityToggles
+
+        rememberDiscoveredToggles(
+            fakeController as unknown as Controller,
+            "skills",
+            { [globalSkill]: true, [disabledGlobalSkill]: true },
+            true,
+            "global",
+        )
+        rememberDiscoveredToggles(fakeController as unknown as Controller, "rules", { [globalRule]: true }, true, "global")
+
+        const state = await buildState.call(fakeController, 1)
+
+        expect(state.globalSkillsToggles).toEqual({
+            [globalSkill]: true,
+            [disabledGlobalSkill]: false,
+        })
+        expect(state.globalClineRulesToggles).toEqual({
+            [globalRule]: true,
+        })
     })
 })
 

@@ -59,7 +59,13 @@ export class JournalConversationView implements ConversationHistoryReader {
             const entries: ConversationViewEntry[] = []
             // Sequential on purpose: a first render of a long history may read many
             // attachments, and the order they are read in must not depend on timing.
-            for (const entry of visible) entries.push({ entry, ...(await this.render(entry.payloadRef)) })
+            // Yield periodically so a long first render cannot monopolise the
+            // extension host: the order stays sequential, only the event loop gets
+            // a chance to run the RPCs and file callbacks queued behind it.
+            for (const [index, entry] of visible.entries()) {
+                entries.push({ entry, ...(await this.render(entry.payloadRef)) })
+                if (index > 0 && index % 200 === 0) await new Promise<void>((resolve) => setImmediate(resolve))
+            }
             const superseded = new Set(entries.flatMap((item) => [...(item.supersededPayloadRefs ?? [])]))
             const canonical = entries.filter((item) => !superseded.has(item.entry.payloadRef))
             if (this.isLatest(projection.through)) {

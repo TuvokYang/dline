@@ -52,6 +52,13 @@ async function scanRules(controller: Controller): Promise<RefreshedDlineToggles>
         // writes its result into the preference store, so remember the raw scan
         // here instead — the resolved maps above already fold in user overrides
         // and cannot answer that question.
+        rememberDiscoveredToggles(
+            controller,
+            "rules",
+            rulesRefresh.discoveredGlobalToggles,
+            rulesRefresh.globalScanComplete,
+            "global",
+        )
         rememberDiscoveredToggles(controller, "rules", rulesRefresh.discoveredLocalToggles, rulesRefresh.localScanComplete)
         rememberDiscoveredToggles(
             controller,
@@ -70,6 +77,13 @@ async function scanRules(controller: Controller): Promise<RefreshedDlineToggles>
             "agentsRules",
             externalRefresh.discovered.agentsRules.toggles,
             externalRefresh.discovered.agentsRules.complete,
+        )
+        rememberDiscoveredToggles(
+            controller,
+            "workflows",
+            workflowsRefresh.discoveredGlobalToggles,
+            workflowsRefresh.globalScanComplete,
+            "global",
         )
         rememberDiscoveredToggles(
             controller,

@@ -18,6 +18,8 @@ export interface NewestGroupScanRow<TRow> {
 export interface NewestGroupScanOptions<TRow> {
     /** Groups the caller wants to keep, counted after de-duplication. */
     readonly targetGroups: number
+    /** Optional starting physical-row fetch size when callers expect >1 revision per group. */
+    readonly initialScanRows?: number
     /** Hard ceiling on physical rows this scan may materialize, across every widening. */
     readonly maxScanRows: number
     /** Fetch up to `limit` rows, newest first, with the rows' own ordering applied. */
@@ -30,7 +32,8 @@ export async function scanNewestGroups<TRow>(options: NewestGroupScanOptions<TRo
     if (!Number.isSafeInteger(options.targetGroups) || options.targetGroups < 1) {
         throw new Error("Newest group scan requires a positive integer group target")
     }
-    let scanRows = Math.min(options.targetGroups, options.maxScanRows)
+    const startingRows = Math.max(options.targetGroups, options.initialScanRows ?? options.targetGroups)
+    let scanRows = Math.min(startingRows, options.maxScanRows)
     while (true) {
         const rows = await options.fetch(scanRows)
         // A short page means the window held no more rows, so the newest slice is

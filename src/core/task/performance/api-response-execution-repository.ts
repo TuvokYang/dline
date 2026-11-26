@@ -21,6 +21,8 @@ export interface TaskApiResponseExecutionRepositoryOptions {
 }
 
 const DEFAULT_RECENT_EXECUTION_LIMIT = 60
+/** Physical rows one recent read inspects before selecting; an execution holds few revisions. */
+const DEFAULT_RECENT_SCAN_ROWS = 4_096
 
 /** Executions one range read keeps; see the round repository's round budget. */
 const DEFAULT_RANGE_MAX_ROUNDS = 32_768
@@ -59,13 +61,15 @@ export class TaskApiResponseExecutionRepository implements ApiResponseExecutionR
         await this.initialize()
         await this.waitForWrites()
         const fields = ApiResponseExecutionEntity.storage.fields
+        // Mirror the round repository: order by the composite (taskId, completedAtMs, revision)
+        // index and cap physical rows before deduplicating instead of running latestPerGroup over
+        // the entire history on every Task open.
         const result = await this.requireCollection().query({
             where: eq(fields.taskId, this.options.taskId),
-            select: latestPerGroup({ groupBy: [fields.executionId], orderBy: [desc(fields.revision)] }),
-            orderBy: [desc(fields.completedAtMs), desc(fields.providerAttempt)],
-            limit,
+            orderBy: [desc(fields.completedAtMs), desc(fields.revision)],
+            limit: Math.max(limit, DEFAULT_RECENT_SCAN_ROWS),
         })
-        return result.records.reverse().map(fromApiResponseExecutionEntity)
+        return selectLatestExecutions(result.records.map(fromApiResponseExecutionEntity)).slice(-limit)
     }
 
     async readRange(query: ApiResponseExecutionRangeQuery): Promise<ApiResponseExecutionRecord[]> {
@@ -106,7 +110,7 @@ export class TaskApiResponseExecutionRepository implements ApiResponseExecutionR
                         gte(fields.completedAtMs, query.startMs),
                         lt(fields.completedAtMs, query.endMs),
                     ),
-                    orderBy: [desc(fields.completedAtMs), desc(fields.providerAttempt), desc(fields.executionId)],
+                    orderBy: [desc(fields.completedAtMs), desc(fields.revision)],
                     limit,
                 })
                 return result.records.map(fromApiResponseExecutionEntity)

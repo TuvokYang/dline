@@ -29,13 +29,38 @@ interface Replacement {
     readonly hidden: readonly JournalEntry[]
 }
 
-type VisibleMessages = Map<string, JournalEntry>
-type Replacements = Map<string, Replacement>
+type VisibleMessages = Map<number, JournalEntry>
+type Replacements = Map<number, Replacement>
+/** Disjoint inclusive `[fromSeq, toSeq]` intervals of reachable entries; O(rewinds) instead of O(entries). */
+type SeenRanges = Array<[number, number]>
+
+function seenHas(seen: readonly (readonly [number, number])[], seq: number): boolean {
+    if (!Number.isInteger(seq) || seq < 1) return false
+    for (let index = seen.length - 1; index >= 0; index--) {
+        const [from, to] = seen[index]
+        if (seq > to) return false
+        if (seq >= from) return true
+    }
+    return false
+}
+
+function seenAdd(seen: SeenRanges, seq: number): void {
+    const last = seen[seen.length - 1]
+    if (last && last[1] + 1 === seq) {
+        last[1] = seq
+        return
+    }
+    seen.push([seq, seq])
+}
+
+function cloneSeen(seen: readonly (readonly [number, number])[]): SeenRanges {
+    return seen.map(([from, to]) => [from, to])
+}
 
 function reorder(visible: VisibleMessages): void {
     const ordered = [...visible.values()].sort((left, right) => compareJournalWatermarks(left.watermark, right.watermark))
     visible.clear()
-    for (const message of ordered) visible.set(journalWatermarkKey(message.watermark), message)
+    for (const message of ordered) visible.set(message.watermark.seq, message)
 }
 
 function within(watermark: JournalWatermark, from: JournalWatermark, to: JournalWatermark): boolean {
@@ -78,7 +103,7 @@ function hideRange(visible: VisibleMessages, replacements: Replacements, from: J
 function placeReplacement(visible: VisibleMessages, replacements: Replacements, marker: JournalEntry, hidden: JournalEntry[]) {
     if (!marker.range) return
     const replacement: JournalEntry = { ...marker, kind: "message", source: "system", watermark: marker.range.from }
-    const key = journalWatermarkKey(marker.range.from)
+    const key = marker.range.from.seq
     visible.set(key, replacement)
     replacements.set(key, { from: marker.range.from, to: marker.range.to, hidden })
     reorder(visible)
@@ -96,42 +121,46 @@ function unfoldReplacements(
     replacements: Replacements,
     reaches: (replacement: Replacement) => boolean,
 ): void {
+    let unfolded = false
     for (const [key, replacement] of replacements) {
         if (!reaches(replacement)) continue
         visible.delete(key)
         replacements.delete(key)
-        for (const original of replacement.hidden) visible.set(journalWatermarkKey(original.watermark), original)
+        for (const original of replacement.hidden) visible.set(original.watermark.seq, original)
+        unfolded = true
     }
-    reorder(visible)
+    if (unfolded) reorder(visible)
 }
 
-function requireSeen(seen: ReadonlySet<string>, watermark: JournalWatermark): void {
-    if (!seen.has(journalWatermarkKey(watermark))) throw new Error("JournalMarkerTargetMissing")
+function requireSeen(seen: readonly (readonly [number, number])[], watermark: JournalWatermark): void {
+    if (!seenHas(seen, watermark.seq)) throw new Error("JournalMarkerTargetMissing")
 }
 
 /** The projection being built; a rewind replaces its message view wholesale. */
 interface ProjectionState {
     visible: VisibleMessages
     replacements: Replacements
-    seen: Set<string>
-    readonly checkpoints: JournalEntry[]
+    seen: SeenRanges
 }
 
 function emptyProjectionState(): ProjectionState {
-    return { visible: new Map(), replacements: new Map(), seen: new Set(), checkpoints: [] }
+    return { visible: new Map(), replacements: new Map(), seen: [] }
 }
 
 function cloneProjectionState(state: ProjectionState): ProjectionState {
     return {
         visible: new Map(state.visible),
         replacements: new Map(state.replacements),
-        seen: new Set(state.seen),
-        checkpoints: [...state.checkpoints],
+        seen: cloneSeen(state.seen),
     }
 }
 
-function projectionOf(state: ProjectionState, through: JournalWatermark): JournalProjection {
-    return { through, visibleMessages: [...state.visible.values()], checkpointMarkers: [...state.checkpoints] }
+function projectionOf(
+    state: ProjectionState,
+    through: JournalWatermark,
+    checkpointMarkers: readonly JournalEntry[],
+): JournalProjection {
+    return { through, visibleMessages: [...state.visible.values()], checkpointMarkers: [...checkpointMarkers] }
 }
 
 function requireTarget(entry: JournalEntry): JournalWatermark {
@@ -184,10 +213,15 @@ function applyRewind(state: ProjectionState, target: JournalWatermark, restore: 
     state.seen = restored.seen
 }
 
-function applyEntry(state: ProjectionState, entry: JournalEntry, restore: (target: JournalWatermark) => ProjectionState): void {
+function applyEntry(
+    state: ProjectionState,
+    entry: JournalEntry,
+    restore: (target: JournalWatermark) => ProjectionState,
+    onCheckpoint?: (entry: JournalEntry) => void,
+): void {
     switch (entry.kind) {
         case "message":
-            state.visible.set(journalWatermarkKey(entry.watermark), entry)
+            state.visible.set(entry.watermark.seq, entry)
             return
         case "tombstone": {
             const target = requireTarget(entry)
@@ -195,7 +229,7 @@ function applyEntry(state: ProjectionState, entry: JournalEntry, restore: (targe
             unfoldReplacements(state.visible, state.replacements, (replacement) =>
                 within(target, replacement.from, replacement.to),
             )
-            state.visible.delete(journalWatermarkKey(target))
+            state.visible.delete(target.seq)
             return
         }
         case "truncate_boundary": {
@@ -213,22 +247,39 @@ function applyEntry(state: ProjectionState, entry: JournalEntry, restore: (targe
             return
         }
         case "checkpoint_marker":
-            state.checkpoints.push(entry)
+            onCheckpoint?.(entry)
             return
     }
 }
 
-function projectEntries(entries: readonly JournalEntry[]): ProjectionState {
+function projectEntries(entries: readonly JournalEntry[]): { state: ProjectionState; checkpoints: JournalEntry[] } {
     const state = emptyProjectionState()
+    const checkpoints: JournalEntry[] = []
     entries.forEach((entry, index) => {
-        applyEntry(state, entry, (target) =>
-            projectEntries(
-                entries.slice(0, index).filter((candidate) => compareJournalWatermarks(candidate.watermark, target) <= 0),
-            ),
+        applyEntry(
+            state,
+            entry,
+            (target) =>
+                projectEntries(
+                    entries.slice(0, index).filter((candidate) => compareJournalWatermarks(candidate.watermark, target) <= 0),
+                ).state,
+            (checkpoint) => checkpoints.push(checkpoint),
         )
-        state.seen.add(journalWatermarkKey(entry.watermark))
+        seenAdd(state.seen, entry.watermark.seq)
     })
-    return state
+    return { state, checkpoints }
+}
+
+/** Number of checkpoint markers recorded at or before `seq` (markers are strictly ordered by seq). */
+function checkpointMarkersThrough(markers: readonly JournalEntry[], seq: number): JournalEntry[] {
+    let low = 0
+    let high = markers.length
+    while (low < high) {
+        const mid = (low + high) >>> 1
+        if (markers[mid].watermark.seq <= seq) low = mid + 1
+        else high = mid
+    }
+    return markers.slice(0, low)
 }
 
 export function rebuildJournalProjection(
@@ -237,7 +288,8 @@ export function rebuildJournalProjection(
 ): JournalProjection {
     assertValidSequence(entries)
     const bounded = entries.filter((entry) => compareJournalWatermarks(entry.watermark, through) <= 0)
-    return projectionOf(projectEntries(bounded), through)
+    const { state, checkpoints } = projectEntries(bounded)
+    return projectionOf(state, through, checkpoints)
 }
 
 export interface JournalProjectionIndexOptions {
@@ -248,12 +300,15 @@ export interface JournalProjectionIndexOptions {
 /** Incremental, rebuildable projection of one append-only conversation journal. */
 export class JournalProjectionIndex {
     private readonly entries: JournalEntry[] = []
+    /** Append-only checkpoint markers in strictly ascending seq order; never removed by rewind. */
+    private readonly checkpointMarkers: JournalEntry[] = []
     private readonly checkpoints = new Map<number, ProjectionState>([[0, emptyProjectionState()]])
     private readonly historical = new Map<number, JournalProjection>()
     private readonly checkpointInterval: number
     private readonly historicalCacheSize: number
     private latestState = emptyProjectionState()
-    private latestProjection: JournalProjection = projectionOf(this.latestState, JOURNAL_GENESIS)
+    /** Built lazily on `project()` so opening a large journal does not copy arrays on every entry. */
+    private latestProjection: JournalProjection | undefined
     private lastReplayEntries = 0
 
     constructor(entries: readonly JournalEntry[] = [], options: JournalProjectionIndexOptions = {}) {
@@ -267,19 +322,34 @@ export class JournalProjectionIndex {
         const expected = this.entries.length + 1
         if (entry.watermark.seq !== expected) throw new Error(expected === 1 ? "InvalidJournalGenesis" : "JournalSequenceGap")
         this.entries.push(entry)
-        applyEntry(this.latestState, entry, (target) => this.stateAt(target.seq))
-        this.latestState.seen.add(journalWatermarkKey(entry.watermark))
-        this.latestProjection = projectionOf(this.latestState, entry.watermark)
+        applyEntry(
+            this.latestState,
+            entry,
+            (target) => this.stateAt(target.seq),
+            (checkpoint) => this.checkpointMarkers.push(checkpoint),
+        )
+        seenAdd(this.latestState.seen, entry.watermark.seq)
+        this.latestProjection = undefined
         if (entry.watermark.seq % this.checkpointInterval === 0 || entry.kind === "rewind") {
             this.checkpoints.set(entry.watermark.seq, cloneProjectionState(this.latestState))
         }
     }
 
-    project(through: JournalWatermark = this.latestProjection.through): JournalProjection {
+    /** Whether a rewind appended at the current tail can legally target `target`. */
+    canRewindTo(target: JournalWatermark): boolean {
+        return target.seq === 0 || seenHas(this.latestState.seen, target.seq)
+    }
+
+    project(through: JournalWatermark = this.latestWatermark()): JournalProjection {
         const tail = this.entries.length
         const seq = Math.min(Math.max(0, through.seq), tail)
         if (seq === tail) {
-            return through.seq === tail ? this.latestProjection : { ...this.latestProjection, through }
+            const latest = (this.latestProjection ??= projectionOf(
+                this.latestState,
+                this.latestWatermark(),
+                this.checkpointMarkers,
+            ))
+            return through.seq === tail ? latest : { ...latest, through }
         }
         const cached = this.historical.get(seq)
         if (cached) {
@@ -288,7 +358,7 @@ export class JournalProjectionIndex {
             this.lastReplayEntries = 0
             return cached
         }
-        const projected = projectionOf(this.stateAt(seq), { seq })
+        const projected = projectionOf(this.stateAt(seq), { seq }, checkpointMarkersThrough(this.checkpointMarkers, seq))
         this.historical.set(seq, projected)
         while (this.historical.size > this.historicalCacheSize) this.historical.delete(this.historical.keys().next().value!)
         return projected
@@ -296,6 +366,10 @@ export class JournalProjectionIndex {
 
     diagnostics(): { readonly lastReplayEntries: number } {
         return { lastReplayEntries: this.lastReplayEntries }
+    }
+
+    private latestWatermark(): JournalWatermark {
+        return this.entries.at(-1)?.watermark ?? JOURNAL_GENESIS
     }
 
     private stateAt(targetSeq: number): ProjectionState {
@@ -309,7 +383,7 @@ export class JournalProjectionIndex {
             const entry = this.entries[seq - 1]
             if (!entry) break
             applyEntry(state, entry, (target) => this.stateAt(target.seq))
-            state.seen.add(journalWatermarkKey(entry.watermark))
+            seenAdd(state.seen, entry.watermark.seq)
             replayed++
         }
         this.lastReplayEntries = replayed

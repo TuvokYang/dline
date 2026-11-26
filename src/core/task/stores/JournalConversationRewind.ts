@@ -214,6 +214,12 @@ export class JournalConversationRewind {
 
     /** Project the journal as it would read with the rewind recorded, without recording it. */
     private async assertProjectable(operationId: string, target: JournalWatermark, tail: JournalWatermark): Promise<void> {
+        if (this.journal.canRewindTo) {
+            if (compareJournalWatermarks(target, tail) > 0 || !(await this.journal.canRewindTo(target))) {
+                throw new Error("ConversationRewindTargetMissing")
+            }
+            return
+        }
         const record: JournalEntry = { version: 1, watermark: { seq: tail.seq + 1 }, operationId, kind: "rewind", target }
         try {
             rebuildJournalProjection([...(await this.journal.read()), record])

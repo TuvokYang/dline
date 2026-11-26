@@ -1049,4 +1049,62 @@ describe("TaskActivityStore", () => {
             executionMode: "foreground",
         })
     })
+
+    it("releases hydrated activity records immediately on dispose", async () => {
+        const store = new TaskActivityStore("task-dispose-release")
+        store.create({
+            activityId: "subagent-1",
+            kind: "subagent",
+            executionMode: "foreground",
+            title: "big activity",
+            detail: "payload",
+        })
+        expect(store.list()).toHaveLength(1)
+
+        store.dispose()
+
+        expect(store.list()).toEqual([])
+        expect(store.get("subagent-1")).toBeUndefined()
+    })
+
+    it("loads and sanitizes an older activity on demand via ensureLoaded", async () => {
+        const olderRecord: Activity = {
+            schemaVersion: 2,
+            activityId: "older-subagent",
+            taskId: "task-ensure-loaded",
+            kind: "subagent",
+            executionMode: "background",
+            cancellationOwner: "task",
+            status: "failed",
+            currentAttempt: 1,
+            createdAt: 10,
+            updatedAt: 20,
+            title: "older review with api_key=top-secret-1234",
+            events: [],
+            retryRecipe: {
+                kind: "subagent",
+                schemaVersion: 1,
+                subagentName: "reviewer",
+                task: "Authorization: Bearer secret-bearer-token",
+                prompt: "p".repeat(50_000),
+                timeoutSeconds: 60,
+                retryable: true,
+            },
+        }
+        const loadById = vi.fn(async (id: string) => (id === "older-subagent" ? olderRecord : undefined))
+        const store = new TaskActivityStore("task-ensure-loaded", {
+            load: vi.fn(async () => []),
+            loadById,
+            upsert: vi.fn(async () => undefined),
+        })
+
+        const loaded = await store.ensureLoaded("older-subagent")
+
+        expect(loadById).toHaveBeenCalledWith("older-subagent")
+        expect(loaded?.title).toContain("[REDACTED]")
+        expect(loaded?.title).not.toContain("top-secret-1234")
+        expect(loaded?.retryRecipe?.task).not.toContain("secret-bearer-token")
+        expect(loaded?.retryRecipe?.prompt.length ?? 0).toBeLessThan(50_000)
+        expect(store.isRetryable("older-subagent")).toBe(true)
+    })
 })

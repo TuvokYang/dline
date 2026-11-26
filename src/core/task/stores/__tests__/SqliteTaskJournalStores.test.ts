@@ -165,6 +165,8 @@ describe("SQLite task journal stores", () => {
         const { publications, payloads } = (await openStores("task-publications")).stores
         expect(await publications.has(prepareCommand.prepareKey)).toBe(true)
         expect(await publications.has("dialog.prepare:other")).toBe(false)
+        // Re-marking an already persisted effectKey after reopen stays idempotent without failing.
+        await expect(publications.mark(prepareCommand, prepareCommand.prepareKey)).resolves.toBeUndefined()
         expect(decoder.decode(await payloads.read(payloadRef))).toBe("hello")
     })
 
@@ -190,6 +192,13 @@ describe("SQLite task journal stores", () => {
         await second.storage.close()
 
         const third = await openStores("task-background-delivery")
+        await expect(third.stores.backgroundDeliveries.listPending()).resolves.toEqual([])
+        // Even though acknowledged rows are not loaded into RAM on reopen, staging the same
+        // entryId still verifies idempotency and rejects conflicting payloads via primary key.
+        await expect(third.stores.backgroundDeliveries.stage(staged)).resolves.toEqual({ ...staged, state: "acknowledged" })
+        await expect(third.stores.backgroundDeliveries.stage({ ...staged, text: "mutated after ack" })).rejects.toThrow(
+            "BackgroundDeliveryConflict",
+        )
         await expect(third.stores.backgroundDeliveries.listPending()).resolves.toEqual([])
     })
 

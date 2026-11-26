@@ -74,10 +74,11 @@ export class TaskApiRequestRoundRepository implements ApiRequestRoundRepository 
         const fields = ApiRequestRoundEntity.storage.fields
         // The recent read runs on every chat fold and has no time bound, so it caps
         // the physical rows it reads before selecting instead of ranking the whole
-        // Task history on each call.
+        // Task history on each call. Ordering by (completedAtMs, revision) walks the
+        // composite index without a SQLite temp B-tree; ties are sorted in memory.
         const result = await this.requireCollection().query({
             where: eq(fields.taskId, this.options.taskId),
-            orderBy: [desc(fields.completedAtMs), desc(fields.providerAttempt), desc(fields.roundId)],
+            orderBy: [desc(fields.completedAtMs), desc(fields.revision)],
             limit: Math.max(limit, DEFAULT_RECENT_SCAN_ROWS),
         })
         return selectLatestRevisions(result.records.map(fromApiRequestRoundEntity)).slice(-limit)
@@ -122,7 +123,7 @@ export class TaskApiRequestRoundRepository implements ApiRequestRoundRepository 
                         gte(fields.completedAtMs, query.startMs),
                         lt(fields.completedAtMs, query.endMs),
                     ),
-                    orderBy: [desc(fields.completedAtMs), desc(fields.providerAttempt), desc(fields.roundId)],
+                    orderBy: [desc(fields.completedAtMs), desc(fields.revision)],
                     limit,
                 })
                 return result.records.map(fromApiRequestRoundEntity)
@@ -152,15 +153,33 @@ export class TaskApiRequestRoundRepository implements ApiRequestRoundRepository 
     async readCumulativeUsage(): Promise<ApiRequestRoundCumulativeUsage> {
         await this.initialize()
         await this.waitForWrites()
-        // The cumulative total reuses the bounded slice the range read produces.
-        // Materializing the whole history here made opening a long Task pay for
-        // every round it had ever recorded.
-        const exact = await this.readRangeSnapshot({
-            startMs: 0,
-            endMs: Number.MAX_SAFE_INTEGER,
-            pageSize: 512,
-            maxRounds: DEFAULT_RANGE_MAX_ROUNDS,
+        const fields = ApiRequestRoundEntity.storage.fields
+        // Walk the (taskId, completedAtMs, revision) index once with a 2x initial row budget
+        // (ordinary rounds carry revision 0 + exact revision 1) and aggregate entities directly,
+        // avoiding double widening queries, per-row record validation, and a 32k-item sort on open.
+        const scan = await scanNewestGroups<ApiRequestRoundEntity>({
+            targetGroups: DEFAULT_RANGE_MAX_ROUNDS,
+            initialScanRows: Math.min(DEFAULT_RANGE_MAX_ROUNDS * 2, DEFAULT_RANGE_SCAN_ROWS),
+            maxScanRows: DEFAULT_RANGE_SCAN_ROWS,
+            keyOf: ({ roundId }) => roundId,
+            fetch: async (limit) => {
+                const result = await this.requireCollection().query({
+                    where: eq(fields.taskId, this.options.taskId),
+                    orderBy: [desc(fields.completedAtMs), desc(fields.revision)],
+                    limit,
+                })
+                return result.records
+            },
         })
+        const latestByRound = new Map<string, ApiRequestRoundEntity>()
+        for (const entity of scan.rows) {
+            const current = latestByRound.get(entity.roundId)
+            if (current) {
+                if (entity.revision > current.revision) latestByRound.set(entity.roundId, entity)
+            } else if (latestByRound.size < DEFAULT_RANGE_MAX_ROUNDS) {
+                latestByRound.set(entity.roundId, entity)
+            }
+        }
         let legacyRows: ApiRequestRoundLegacyImportEntity[] = []
         if (this.legacyCollection) {
             try {
@@ -170,7 +189,7 @@ export class TaskApiRequestRoundRepository implements ApiRequestRoundRepository 
                 Logger.warn(`[Task ${this.options.taskId}] Failed to read legacy API request usage`, error)
             }
         }
-        return aggregateCumulativeUsage(exact, legacyRows, this.legacyImportDegraded)
+        return aggregateCumulativeUsage([...latestByRound.values()], legacyRows, this.legacyImportDegraded)
     }
 
     isDegraded(): boolean {
@@ -405,7 +424,17 @@ async function readAllLegacyRows(
 }
 
 function aggregateCumulativeUsage(
-    exact: readonly ApiRequestRoundRecord[],
+    exact: readonly Pick<
+        ApiRequestRoundEntity,
+        | "usageQuality"
+        | "inputTokens"
+        | "outputTokens"
+        | "cacheWriteTokens"
+        | "cacheReadTokens"
+        | "cacheUsageReported"
+        | "totalCost"
+        | "currency"
+    >[],
     legacyRows: readonly ApiRequestRoundLegacyImportEntity[],
     degraded: boolean,
 ): ApiRequestRoundCumulativeUsage {

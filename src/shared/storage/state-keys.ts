@@ -112,6 +112,13 @@ const GLOBAL_STATE_FIELDS = {
     remoteRulesToggles: { default: {} as ClineRulesToggles },
     remoteWorkflowToggles: { default: {} as ClineRulesToggles },
     remoteSkillsToggles: { default: {} as ClineRulesToggles },
+    // Mirrors of the last trustworthy global capability scan, kept so state
+    // pushes and restarts preserve discovered user resources instead of wiping
+    // them back to an empty sparse override map.
+    discoveredGlobalRulesToggles: { default: {} as ClineRulesToggles },
+    discoveredGlobalWorkflowToggles: { default: {} as ClineRulesToggles },
+    discoveredGlobalSkillsToggles: { default: {} as ClineRulesToggles },
+    discoveredGlobalSubagentsToggles: { default: {} as ClineRulesToggles },
     // Path to worktree that should auto-open Cline sidebar when launched
     worktreeAutoOpenPath: { default: undefined as string | undefined },
 } satisfies FieldDefinitions

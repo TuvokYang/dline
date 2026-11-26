@@ -152,6 +152,7 @@ export async function refreshSubagents(controller: Controller): Promise<Refreshe
         const visibleGlobalSubagents = globalSubagents.filter((agent) => !localNames.has(agent.name))
         const discoveredGlobalToggles = Object.fromEntries(globalSubagents.map((agent) => [agent.path, true]))
         const globalToggles = resolveCapabilityToggles(controller.stateManager, "subagents", discoveredGlobalToggles)
+        rememberDiscoveredToggles(controller, "subagents", discoveredGlobalToggles, globalScan.complete, "global")
         for (const agent of visibleGlobalSubagents) {
             agent.enabled = globalToggles[agent.path] !== false
         }

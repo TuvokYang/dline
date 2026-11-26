@@ -45,6 +45,7 @@ function createBuilder(stateManager: StateManager, taskId?: string): StateBuilde
         getCurrentTaskId: () => taskId,
         materializeMessageWindow: () => ({ messages: [], totalCount: 0, firstItemIndex: 0 }),
         readLocalCapabilityToggles: () => ({}),
+        readGlobalCapabilityToggles: () => ({}),
         modeSwitchCoordinator: { getSnapshot: () => ({ phase: "idle" }) },
         getTaskLockStatus: () => undefined,
         projectCurrentTaskViewState: () => undefined,

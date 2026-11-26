@@ -1,18 +1,23 @@
 import { parseYamlFrontmatter } from "@core/context/instructions/user-instructions/frontmatter"
 import { capabilityResourceId } from "@core/storage/settings/capability-resource-id"
-import { type CapabilityKind, mergeScopedToggles, readScopedToggles } from "@core/storage/settings/capability-toggle-store"
+import {
+    type CapabilityKind,
+    capabilityToggleSettingsKey,
+    mergeScopedToggles,
+    readScopedToggles,
+} from "@core/storage/settings/capability-toggle-store"
 import { EmptyRequest } from "@shared/proto/dline/common"
 import { SlashCommandInfo, SlashCommandsResponse } from "@shared/proto/dline/slash"
 import { parseTaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
 import fs from "fs/promises"
 import { extractNameFromMdFile, getBuiltInSlashCommands } from "@/shared/slashCommands"
 import { Controller } from ".."
-import { readDiscoveredToggles } from "../file/capability-discovery-cache"
+import { hasDiscoveredTogglesSnapshot, readDiscoveredToggles } from "../file/capability-discovery-cache"
 
 const MAX_DESCRIPTION_LENGTH = 80
 
 /**
- * Read the stored overrides of one locally discovered capability kind.
+ * Read the effective state of one locally discovered capability kind.
  *
  * The scope chain owns these preferences; merging the scopes keeps a task-level
  * choice visible while an untouched resource keeps its discovered default.
@@ -28,6 +33,25 @@ function localCapabilityToggles(controller: Controller, kind: CapabilityKind): R
         return overrides
     }
 
+    return Object.fromEntries(
+        Object.entries(discovered).map(([resourcePath, enabled]) => {
+            const resourceId = capabilityResourceId(resourcePath)
+            return [resourcePath, overrides[resourceId] ?? overrides[resourcePath] ?? enabled]
+        }),
+    )
+}
+
+/** Read the effective state of one globally discovered capability kind. */
+function globalCapabilityToggles(controller: Controller, kind: CapabilityKind): Record<string, boolean> {
+    if (!hasDiscoveredTogglesSnapshot(controller, kind, "global")) {
+        return (
+            (controller.stateManager.getGlobalSettingsKey(capabilityToggleSettingsKey(kind, "global")) as
+                | Record<string, boolean>
+                | undefined) ?? {}
+        )
+    }
+    const overrides = mergeScopedToggles(readScopedToggles(controller.stateManager, kind))
+    const discovered = readDiscoveredToggles(controller, kind, "global")
     return Object.fromEntries(
         Object.entries(discovered).map(([resourcePath, enabled]) => {
             const resourceId = capabilityResourceId(resourcePath)
@@ -84,8 +108,7 @@ export async function getAvailableSlashCommands(controller: Controller, _request
     // Get workflow toggles from state
     const taskToggles = parseTaskCapabilityToggles(controller.task?.owners.settings.taskCapabilityToggles)
     const localWorkflowToggles = taskToggles?.localWorkflowToggles ?? localCapabilityToggles(controller, "workflows")
-    const globalWorkflowToggles =
-        taskToggles?.globalWorkflowToggles ?? controller.stateManager.getGlobalSettingsKey("globalWorkflowToggles") ?? {}
+    const globalWorkflowToggles = taskToggles?.globalWorkflowToggles ?? globalCapabilityToggles(controller, "workflows")
     const remoteWorkflowToggles =
         taskToggles?.remoteWorkflowToggles ?? controller.stateManager.getGlobalStateKey("remoteWorkflowToggles") ?? {}
     const remoteConfigSettings = controller.stateManager.getRemoteConfigSettings()
@@ -155,8 +178,7 @@ export async function getAvailableSlashCommands(controller: Controller, _request
 
     // Add skills (section="skill", name="xxx")
     const localSkillsToggles = taskToggles?.localSkillsToggles ?? localCapabilityToggles(controller, "skills")
-    const globalSkillsToggles =
-        taskToggles?.globalSkillsToggles ?? controller.stateManager.getGlobalSettingsKey("globalSkillsToggles") ?? {}
+    const globalSkillsToggles = taskToggles?.globalSkillsToggles ?? globalCapabilityToggles(controller, "skills")
     const remoteSkillsToggles =
         taskToggles?.remoteSkillsToggles ?? controller.stateManager.getGlobalStateKey("remoteSkillsToggles") ?? {}
     const remoteGlobalSkills = remoteConfigSettings?.remoteGlobalSkills ?? []
