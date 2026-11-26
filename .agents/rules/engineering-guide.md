@@ -2,7 +2,7 @@
 
 This file records high-signal project conventions that are easy to miss and expensive to rediscover. Add guidance only when it cannot be learned quickly from nearby code, tests, or an existing specialized rule.
 
-Rules describe project architecture and conventions. Skills teach concrete work techniques. Workflows organize long implementation and operational sequences.
+Rules describe project architecture and conventions. Skills teach concrete work techniques. Workflows organize long implementation and operational sequences. Engineering methods below are recommendations to adapt to the task; authorization, data protection, truthful results and explicit format contracts retain their stated requirements.
 
 ## File editing
 
@@ -13,15 +13,15 @@ Rules describe project architecture and conventions. Skills teach concrete work 
 
 ## Source file size
 
-- A hand-written source file must not exceed 2,000 physical lines.
+- A hand-written source file should stay within 2,000 physical lines; extract a real responsibility when needed.
 - Do not split a file merely because it is large while its responsibilities, change reasons, and dependency direction remain coherent. When a file approaches the limit, extract stable responsibilities or dependency boundaries rather than creating arbitrary forwarding fragments.
 - Generated code, machine-managed lockfiles and snapshots, and fixture data are not hand-written source files and must not be split solely to satisfy this limit.
 
 ## Naming
 
-- File names and type names (classes, interfaces, type aliases, and enums) must not exceed four words. Function, method, variable, parameter, field, and constant names must not exceed three words.
+- Prefer at most four words for file and type names, and three for functions, methods, variables, parameters, fields and constants. Preserve clarity and established public names.
 - Names must identify the concrete subject and responsibility or action. A reader should be able to tell what the component does and how it differs from neighboring components.
-- Treat abstract role words (for example, `Owner`, `Projection`, or `Manager`) as a signal to examine what the name communicates. Replace labels that could fit unrelated components equally well with the specific operation, data, or domain concept they represent.
+- Names must state the concrete responsibility instead of hiding it behind `Owner`, a mechanical `Opening` prefix, or an undocumented `Facade`; for example, use `ToolExecution` instead of `OpeningTools`, `TaskProcessAssembly` instead of `FacadeAssembly`, and `ReviewerTaskService` instead of `ResidentTaskOwner`, while precise names such as `StateManager` and `ApiHandler` remain valid.
 - Use directory, module, namespace, enclosing-type, and local-scope context to avoid repeating information. Preserve the meaning needed to identify a responsibility and distinguish its consumers.
 - Name functions and methods for their action, and variables for their subject or meaning. Use clear predicates such as `is`, `has`, and `can` for booleans.
 - Count words at camelCase, PascalCase, and separator boundaries. Established acronyms such as API, HTTP, UI, and MCP count as one word. Prefixes and suffixes such as `get`, `create`, `is`, `Options`, `Result`, and `Handler` count toward the limit; split constants at underscores.
@@ -67,34 +67,43 @@ Check `package.json` before choosing a verification command. Current primary scr
 
 ## Error-handling boundaries
 
-- Handle each failure at one owning boundary: the caller that can recover, translate it into the operation's public failure, or terminate that operation. When an outer call boundary already catches the failure, inner functions must propagate it rather than catch it again.
-- Do not scatter `try-catch` blocks through a call chain. Catching only to log and rethrow, wrap the same error again, return an unexplained default, or hide a broken invariant is prohibited. Report a failure once at its owning boundary.
-- Do not add speculative `try-catch` around deterministic computations, statically checked operations, or operations whose validated inputs and contract rule out the failure being caught. Type checking does not make filesystem, network, process, or persistence operations infallible; handle their actual failures at the appropriate boundary.
-- Use `finally` for required resource cleanup. A distinct rollback or recovery operation belongs to the boundary that owns it, not to repeated defensive catches in its callees. Cancellation must retain its existing meaning and must not be converted into success.
+- Prefer one outer error boundary that can recover, translate the public failure or terminate the operation; internal calls should propagate errors. An inner catch is appropriate for a concrete recovery or rollback duty that the caller cannot perform.
+- Promise rejection handling should follow the same ownership. Address the original defect rather than layering wrappers, repeated logging or silent defaults.
+- Prefer `finally` for cleanup, preserve cancellation and handle real I/O failures at their owning boundary.
 
 ## Defensive code boundaries
 
-Defensive code here means extra checks, fallback values, exception wrappers, filtering, or alternate paths added to tolerate hypothetical invalid internal states instead of relying on or fixing the owning contract. Do not add or expand it.
+- Prefer precise interfaces and state unions. Validate untrusted input at ingress, then consume those guarantees internally; handle real cancellation, permission, identity and concurrency conditions where they belong.
+- Correct the owning type or producer when a contract is broken. Avoid repeated validation, casts, empty defaults, stale data and branches for excluded states.
 
-- Consume guarantees already established by types, schemas, configuration resolution, or the owning boundary directly. For example, do not repeat `Number.isFinite`, rounding, or clamping after the configuration owner has already resolved a valid limit; do not recheck a schema-validated parameter's runtime type inside each callee.
-- Do not turn a broken invariant into apparent success with an empty array, `0`, stale data, a swallowed exception, or a fallback branch. Correct the producer or owning contract; handle a real failure once at the boundary that owns its outcome.
-- Required business decisions such as cancellation, permission refusal, and proof of physical resource stop are not speculative defensive code. Validate genuinely untrusted file/network/process/persisted input at its owning boundary, without duplicating that validation downstream.
+## Cohesion and proportional changes
+
+- Changes should stay within the owning module's responsibility and dependency direction, keeping cross-layer branches and unrelated work out of coordinators.
+- Local refactoring is recommended when it resolves an actual obstruction, duplication or mixed responsibility. A simple feature should use the existing structure; avoid adding layers or rewriting surrounding modules for it.
+- Follow the real path and relevant acceptance criteria. Further investigation or verification should be driven by new evidence.
+- User updates should state the outcome, actions, observed results and next step directly. Describe concrete failures and their impact concisely; omit preventive disclaimers and repeated negative assurances.
+
+| Concern | Do | Do not |
+| --- | --- | --- |
+| Failure | Translate a storage error once at the request boundary; use `finally` to release resources. | Catch in every helper or return `[]` after failure. |
+| Types | Parse unknown input into a state union, then handle its declared variants. | Recheck a validated number in every callee or cast away a missing branch. |
+| Structure | Separate pricing from payment when those duties are mixed. | Add a service hierarchy or rewrite the module for one new field. |
 
 ## Spec design: do not evade defects with defensive programming
 
-Do not use defensive programming to evade root-cause fixes or required behavior. A spec must not invent unnecessary invariants, then prescribe filtering, disabling features, dropping data, or stale-data substitution to satisfy them. Limit failure to the operation that actually failed.
+A spec should express the real behavior and fix the owning cause. Avoid invented invariants that lead to filtering, feature disabling or stale-data substitution; keep the failure local to the affected operation.
 
 **Example:** a navigator needs message-index jumps and per-interval tool counts, not strictly increasing timestamps. Declaring timestamp disorder a permanent error that hides the navigator is a contract defect; filtering points or showing an old snapshot only conceals it. Fix timestamp publication independently, aggregate every index interval, and let a missing target end only that click—not disable other points or stop updates.
 
 ## Test and verification contracts
 
 - Organize tests by module or business boundary, not by source file. Do not mechanically create one unit-test file for each implementation file; exercise the module's observable contract across its collaborating components.
-- Low-value unit tests are prohibited. Do not add tests to inflate file coverage, case counts, or completion records; each test must detect a plausible violation of the module's behavior, boundary, failure, or recovery contract.
+- Prefer tests that detect a plausible behavior, boundary, failure or recovery defect. Choose coverage by risk rather than file counts or completion records.
 
 - Tests assert observable results against an independent oracle: inputs, parsed structure, ordering, state transitions or side effects. Each case must distinguish a plausible incorrect implementation.
 - `expect(text).toContain("implementation-owned prose")`, copied labels/endpoints, tag presence and string snapshots alone do not establish behavior. Exact tokens belong in tests when a parser, protocol, compatibility or accessibility consumer depends on them; exercise that consumer.
 - Assigning the same source value to both sides, deriving expected and actual through the same implementation, or returning a mock value and only asserting that value is not an independent test.
-- Remove such low-value assertions in a touched test scope. Replace them with the underlying invariant when one exists. This is not a ban on text: a caller-visible error matched by downstream code is a testable contract.
+- In a relevant touched scope, prefer observable invariants over implementation-text assertions. Caller-visible text consumed as a protocol or compatibility contract remains useful to test.
 - Generated snapshots record intentional aggregate output; regenerate them with repository commands and pair them with focused semantic checks.
 
 Load `use-vitest` for execution/snapshot methods and `use-e2e` for host integration and diagnostics.
