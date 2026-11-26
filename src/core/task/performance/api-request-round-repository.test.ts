@@ -296,4 +296,106 @@ describe("TaskApiRequestRoundRepository", () => {
         await expect(repository.readRecent()).rejects.toThrow()
         await expect(repository.close()).resolves.toBeUndefined()
     })
+
+    it("aggregates cumulative usage across all rounds beyond the 32,768 chart window and uses each round's latest revision", async () => {
+        const location = path.join(root, "cumulative-full.db")
+        const repository = new TaskApiRequestRoundRepository({ taskId: "task-a", location })
+        repositories.push(repository)
+
+        // 33,000 rounds exceeds DEFAULT_RANGE_MAX_ROUNDS (32,768); lifetime totals must include every round.
+        const totalRounds = 33_000
+        const batchSize = 2_000
+        for (let start = 0; start < totalRounds; start += batchSize) {
+            const batch: ApiRequestRoundRecord[] = []
+            const end = Math.min(totalRounds, start + batchSize)
+            for (let index = start; index < end; index++) {
+                const roundId = `task-a:request-a:provider:${index.toString().padStart(6, "0")}`
+                const completedAtMs = 10_000 + index
+                // revision 0 carries no usage; revision 1 carries exact usage.
+                batch.push(round(roundId, 0, completedAtMs), {
+                    ...round(roundId, 1, completedAtMs),
+                    totalCost: 0.01,
+                    currency: "USD",
+                })
+            }
+            await repository.append(batch)
+        }
+        // Append a higher revision on round 0 to prove revision 1 is superseded rather than double-counted.
+        await repository.append([
+            {
+                ...round("task-a:request-a:provider:000000", 2, 10_000),
+                inputTokens: 500,
+                outputTokens: 60,
+                cacheWriteTokens: 40,
+                cacheReadTokens: 130,
+                totalCost: 0.05,
+                currency: "USD",
+            },
+        ])
+        // Append an aborted round with usageQuality="none" to ensure it contributes zero without crowding out older rounds.
+        await repository.append([{ ...round("task-a:request-a:provider:999999", 0, 50_000), status: "aborted" }])
+
+        const cumulative = await repository.readCumulativeUsage()
+
+        // 32,999 rounds at (100, 20, 10, 30, $0.01) + round 0 rev 2 at (500, 60, 40, 130, $0.05)
+        expect(cumulative).toMatchObject({
+            degraded: false,
+            inputTokens: 32_999 * 100 + 500,
+            outputTokens: 32_999 * 20 + 60,
+            cacheWriteTokens: 32_999 * 10 + 40,
+            cacheReadTokens: 32_999 * 30 + 130,
+            cacheNumerator: 32_999 * 30 + 130,
+            cacheDenominator: 32_999 * 140 + 670,
+            currency: "USD",
+        })
+        expect(cumulative.totalCost).toBeCloseTo(32_999 * 0.01 + 0.05, 5)
+    })
+
+    it("omits currency when exact rounds span multiple currencies", async () => {
+        const location = path.join(root, "mixed-currency.db")
+        const repository = new TaskApiRequestRoundRepository({ taskId: "task-a", location })
+        repositories.push(repository)
+        await repository.append([
+            { ...round("task-a:request-a:provider:0", 1, 3_000), totalCost: 0.1, currency: "USD" },
+            { ...round("task-a:request-a:provider:1", 1, 4_000), totalCost: 0.5, currency: "CNY" },
+        ])
+
+        const cumulative = await repository.readCumulativeUsage()
+        expect(cumulative.currency).toBeUndefined()
+        expect(cumulative.totalCost).toBeCloseTo(0.6, 5)
+    })
+
+    it("preserves a persisted degraded legacy-import marker when reopened read-only", async () => {
+        const location = path.join(root, "readonly-degraded.db")
+        // Seed an exact round at ts=2_000 and an overlapping legacy message at ts=3_000 so the marker records degraded=true.
+        const seedExact = new TaskApiRequestRoundRepository({ taskId: "task-a", location })
+        repositories.push(seedExact)
+        await seedExact.append([round("task-a:request-a:provider:0", 1, 2_000)])
+        await seedExact.close()
+
+        const overlappingMessages: UiMessage[] = [
+            {
+                ts: 3_000,
+                type: "say",
+                say: "api_req_started",
+                text: JSON.stringify({ tokensIn: 999, tokensOut: 99, cacheReads: 500, cost: 0.5, currency: "USD" }),
+            },
+        ]
+        const writable = new TaskApiRequestRoundRepository({
+            taskId: "task-a",
+            location,
+            legacySource: { getAll: () => overlappingMessages },
+            clock: () => 5_000,
+        })
+        repositories.push(writable)
+        const writableCumulative = await writable.readCumulativeUsage()
+        expect(writableCumulative.degraded).toBe(true)
+        await writable.close()
+
+        const readOnly = new TaskApiRequestRoundRepository({ taskId: "task-a", location, readOnly: true })
+        repositories.push(readOnly)
+        const readOnlyCumulative = await readOnly.readCumulativeUsage()
+        expect(readOnlyCumulative.degraded).toBe(true)
+        expect(readOnly.isDegraded()).toBe(true)
+    })
 })

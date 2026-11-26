@@ -21,6 +21,15 @@ export interface ApiRequestRoundLegacyImportResult {
     readonly importedAggregateCount: number
 }
 
+/** Read only the persisted legacy-import marker's degraded flag without mutating the database. */
+export async function readLegacyImportDegraded(legacyStore: UnifyStore<ApiRequestRoundLegacyImportEntity>): Promise<boolean> {
+    const marker = await legacyStore.query({
+        where: eq(ApiRequestRoundLegacyImportEntity.storage.fields.recordKey, LEGACY_IMPORT_MARKER_KEY),
+        limit: 1,
+    })
+    return marker.records[0]?.degraded === true
+}
+
 /** Import legacy UIMessage usage once without inventing Provider duration or per-round aggregate identity. */
 export async function importApiRequestRoundLegacyUsage(
     options: ApiRequestRoundLegacyImportOptions,

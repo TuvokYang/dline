@@ -1,11 +1,15 @@
 import type { UnifyStore } from "@core/storage/backend/api/UnifyStore"
 import { and, asc, desc, eq, gte, latestPerGroup, lt } from "@core/storage/backend/api/UnifyStoreQuery"
 import { Logger } from "@shared/services/Logger"
-import { createApiRequestRoundCollection } from "./api-request-round-collection"
+import {
+    type ApiRequestRoundCollection,
+    createApiRequestRoundCollection,
+    type ExactCumulativeRoundUsage,
+} from "./api-request-round-collection"
 import { ApiRequestRoundEntity, fromApiRequestRoundEntity, toApiRequestRoundEntity } from "./api-request-round-entity"
 import { createApiRequestRoundLegacyImportCollection } from "./api-request-round-legacy-import-collection"
 import { ApiRequestRoundLegacyImportEntity } from "./api-request-round-legacy-import-entity"
-import { importApiRequestRoundLegacyUsage } from "./api-request-round-legacy-importer"
+import { importApiRequestRoundLegacyUsage, readLegacyImportDegraded } from "./api-request-round-legacy-importer"
 import type { LegacyUiMessageSource } from "./api-request-round-legacy-usage-parser"
 import type {
     ApiRequestRoundCumulativeUsage,
@@ -43,7 +47,7 @@ const DEFAULT_RANGE_SCAN_ROWS = 262_144
 
 /** Owns canonical Provider round persistence for one Task. */
 export class TaskApiRequestRoundRepository implements ApiRequestRoundRepository {
-    private collection: UnifyStore<ApiRequestRoundEntity> | undefined
+    private collection: ApiRequestRoundCollection | undefined
     private legacyCollection: UnifyStore<ApiRequestRoundLegacyImportEntity> | undefined
     private initialization: Promise<void> | undefined
     private writeSequence: Promise<void> = Promise.resolve()
@@ -153,33 +157,10 @@ export class TaskApiRequestRoundRepository implements ApiRequestRoundRepository 
     async readCumulativeUsage(): Promise<ApiRequestRoundCumulativeUsage> {
         await this.initialize()
         await this.waitForWrites()
-        const fields = ApiRequestRoundEntity.storage.fields
-        // Walk the (taskId, completedAtMs, revision) index once with a 2x initial row budget
-        // (ordinary rounds carry revision 0 + exact revision 1) and aggregate entities directly,
-        // avoiding double widening queries, per-row record validation, and a 32k-item sort on open.
-        const scan = await scanNewestGroups<ApiRequestRoundEntity>({
-            targetGroups: DEFAULT_RANGE_MAX_ROUNDS,
-            initialScanRows: Math.min(DEFAULT_RANGE_MAX_ROUNDS * 2, DEFAULT_RANGE_SCAN_ROWS),
-            maxScanRows: DEFAULT_RANGE_SCAN_ROWS,
-            keyOf: ({ roundId }) => roundId,
-            fetch: async (limit) => {
-                const result = await this.requireCollection().query({
-                    where: eq(fields.taskId, this.options.taskId),
-                    orderBy: [desc(fields.completedAtMs), desc(fields.revision)],
-                    limit,
-                })
-                return result.records
-            },
-        })
-        const latestByRound = new Map<string, ApiRequestRoundEntity>()
-        for (const entity of scan.rows) {
-            const current = latestByRound.get(entity.roundId)
-            if (current) {
-                if (entity.revision > current.revision) latestByRound.set(entity.roundId, entity)
-            } else if (latestByRound.size < DEFAULT_RANGE_MAX_ROUNDS) {
-                latestByRound.set(entity.roundId, entity)
-            }
-        }
+        // Aggregate over every round of the task inside SQLite so lifetime header totals
+        // never drop older rounds past the chart window budget and never materialize
+        // tens of thousands of round entities into JS memory.
+        const exact = await this.requireCollection().readExactCumulativeUsage(this.options.taskId)
         let legacyRows: ApiRequestRoundLegacyImportEntity[] = []
         if (this.legacyCollection) {
             try {
@@ -189,7 +170,7 @@ export class TaskApiRequestRoundRepository implements ApiRequestRoundRepository 
                 Logger.warn(`[Task ${this.options.taskId}] Failed to read legacy API request usage`, error)
             }
         }
-        return aggregateCumulativeUsage([...latestByRound.values()], legacyRows, this.legacyImportDegraded)
+        return aggregateCumulativeUsage(exact, legacyRows, this.legacyImportDegraded)
     }
 
     isDegraded(): boolean {
@@ -225,7 +206,12 @@ export class TaskApiRequestRoundRepository implements ApiRequestRoundRepository 
             this.collection = await createApiRequestRoundCollection(this.options)
             try {
                 this.legacyCollection = await createApiRequestRoundLegacyImportCollection(this.options)
-                if (this.options.readOnly) return
+                if (this.options.readOnly) {
+                    // Preserve the persisted degraded marker on read-only history opens so
+                    // history displays follow the same fallback contract as active tasks.
+                    this.legacyImportDegraded = await readLegacyImportDegraded(this.legacyCollection)
+                    return
+                }
                 const result = await importApiRequestRoundLegacyUsage({
                     taskId: this.options.taskId,
                     exactStore: this.collection,
@@ -283,7 +269,7 @@ export class TaskApiRequestRoundRepository implements ApiRequestRoundRepository 
         }
     }
 
-    private requireCollection(): UnifyStore<ApiRequestRoundEntity> {
+    private requireCollection(): ApiRequestRoundCollection {
         if (!this.collection) throw new Error("API request round repository is not initialized")
         return this.collection
     }
@@ -424,31 +410,21 @@ async function readAllLegacyRows(
 }
 
 function aggregateCumulativeUsage(
-    exact: readonly Pick<
-        ApiRequestRoundEntity,
-        | "usageQuality"
-        | "inputTokens"
-        | "outputTokens"
-        | "cacheWriteTokens"
-        | "cacheReadTokens"
-        | "cacheUsageReported"
-        | "totalCost"
-        | "currency"
-    >[],
+    exact: ExactCumulativeRoundUsage,
     legacyRows: readonly ApiRequestRoundLegacyImportEntity[],
     degraded: boolean,
 ): ApiRequestRoundCumulativeUsage {
-    let inputTokens = 0
-    let outputTokens = 0
-    let cacheWriteTokens = 0
-    let cacheReadTokens = 0
-    let cacheNumerator = 0
-    let cacheDenominator = 0
-    let totalCost = 0
-    let usageAvailable = false
-    let costAvailable = false
-    let currency: string | undefined
-    let mixedCurrency = false
+    let inputTokens = exact.inputTokens
+    let outputTokens = exact.outputTokens
+    let cacheWriteTokens = exact.cacheWriteTokens
+    let cacheReadTokens = exact.cacheReadTokens
+    let cacheNumerator = exact.cacheNumerator
+    let cacheDenominator = exact.cacheDenominator
+    let totalCost = exact.totalCost
+    let usageAvailable = exact.usageAvailable
+    let costAvailable = exact.costAvailable
+    let currency: string | undefined = exact.distinctCurrencies === 1 ? exact.singleCurrency : undefined
+    let mixedCurrency = exact.distinctCurrencies > 1
     const add = (usage: {
         inputTokens?: number | null
         outputTokens?: number | null
@@ -482,12 +458,9 @@ function aggregateCumulativeUsage(
             costAvailable = true
         }
         if (usage.currency) {
-            if (currency === undefined) currency = usage.currency
+            if (currency === undefined && !mixedCurrency) currency = usage.currency
             else if (currency !== usage.currency) mixedCurrency = true
         }
-    }
-    for (const round of exact) {
-        if (round.usageQuality !== "none") add(round)
     }
     for (const row of legacyRows) {
         if (row.kind === "legacy_round" || row.kind === "aggregate") add(row)

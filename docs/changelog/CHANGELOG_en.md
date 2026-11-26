@@ -7,6 +7,7 @@
 - The environment details block now includes a Workspace Recovery section that tells the model whether checkpoints are enabled.
 
 ### Fixed
+- Fixed TaskHeader cumulative input token counts dropping sharply on very long tasks by aggregating lifetime round usage directly in SQLite instead of truncating at the 32,768-round chart window, and preserving the legacy-import degraded marker on read-only history opens.
 - Fixed resuming very long tasks timing out or crashing the extension host with out-of-memory errors by optimizing journal projection and metrics loading, bounding activity hydration and snapshot size, and removing full-table scans and retained history copies on promotion.
 - Fixed the Restore button timing out when restoring chat from a history or unlocked task view, and surfaced an immediate read-only notice when another window holds the task lock.
 - Fixed context compaction and rate-metrics compaction on one long task blocking the extension host and stalling new tasks and capability panels across the workspace.
