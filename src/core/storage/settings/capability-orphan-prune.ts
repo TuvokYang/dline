@@ -1,11 +1,10 @@
 import type { ClineRulesToggles } from "@shared/cline-rules"
+import { capabilityResourceId } from "./capability-resource-id"
 
 /**
  * Inputs a prune decision depends on.
  *
- * `discoveredIds` must already be normalized through `capabilityResourceId`,
- * because comparing a stored override against a raw scan path is exactly how
- * an override gets mistaken for an orphan.
+ * `discoveredIds` holds ids normalized through `capabilityResourceId`.
  */
 export interface OrphanPruneInput {
     /** Stored sparse overrides for one capability kind in one scope. */
@@ -14,8 +13,6 @@ export interface OrphanPruneInput {
     readonly discoveredIds: ReadonlySet<string>
     /** True only when every source directory was read successfully. */
     readonly scanComplete: boolean
-    /** True once stored keys use the normalized form. */
-    readonly keysNormalized: boolean
 }
 
 export interface OrphanPruneResult {
@@ -28,21 +25,29 @@ export interface OrphanPruneResult {
 /**
  * Decide which overrides no longer refer to an existing resource.
  *
- * Pruning is only safe when the scan is authoritative. Three guards must all
+ * Pruning is only safe when the scan is authoritative. Two guards must both
  * hold, because each one alone has produced a real failure mode:
  *
  * - An incomplete scan (an unreadable directory) would report live resources as
  *   missing and silently discard the user's decisions.
  * - An empty result usually means the workspace is not ready yet, not that every
  *   capability was deleted.
- * - Un-normalized stored keys would never match a normalized scan id, so every
- *   override would look orphaned.
+ *
+ * Each remaining key is matched individually instead of trusting one stored-key
+ * format. Keys reach these maps from several writers, and the scopes are
+ * persisted by different documents: the global map is written with raw scan
+ * paths, task maps carry whatever resource id the webview received, while only
+ * the workspace document went through the key-normalization migration. A single
+ * "keys are normalized" flag could therefore describe one scope and be applied
+ * to three, deleting every `false` the user set at another scope. Resolving each
+ * key to the resource it names removes that assumption: a key is kept when it
+ * resolves to a discovered id, either literally or through normalization.
  *
  * Remote entries are never pruned: they are not produced by the local scan, so
  * their absence carries no information.
  */
 export function pruneOrphanOverrides(input: OrphanPruneInput): OrphanPruneResult {
-    if (!input.scanComplete || !input.keysNormalized || input.discoveredIds.size === 0) {
+    if (!input.scanComplete || input.discoveredIds.size === 0) {
         return { removedIds: [] }
     }
 
@@ -50,7 +55,7 @@ export function pruneOrphanOverrides(input: OrphanPruneInput): OrphanPruneResult
     const pruned: ClineRulesToggles = {}
 
     for (const [id, enabled] of Object.entries(input.overrides)) {
-        if (id.startsWith("remote:") || input.discoveredIds.has(id)) {
+        if (id.startsWith("remote:") || resolvesToDiscovered(id, input.discoveredIds)) {
             pruned[id] = enabled
             continue
         }
@@ -62,4 +67,17 @@ export function pruneOrphanOverrides(input: OrphanPruneInput): OrphanPruneResult
     }
 
     return { pruned, removedIds }
+}
+
+/**
+ * True when a stored key names one of the discovered resources.
+ *
+ * A literal hit covers both forms already in use. Normalizing covers a key
+ * stored before the migration and a key stored by a writer that still records
+ * the raw path, without requiring either writer to change what it persists.
+ */
+function resolvesToDiscovered(id: string, discoveredIds: ReadonlySet<string>): boolean {
+    if (discoveredIds.has(id)) return true
+    const normalized = capabilityResourceId(id)
+    return normalized !== "" && discoveredIds.has(normalized)
 }

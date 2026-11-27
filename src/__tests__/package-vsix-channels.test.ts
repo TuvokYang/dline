@@ -34,7 +34,13 @@ interface ChannelHarness {
     resolveRequestedChannel: (requestedChannel: string, packageVersion: string) => ResolvedChannel
 }
 
-const BINDINGS = { UNRELEASED_SECTION, assertChannelVersion, createPolicyInsidersVersion }
+const BINDINGS = {
+    UNRELEASED_SECTION,
+    // The extractor's selector for the current (development) changelog section.
+    CURRENT_SECTION: "current",
+    assertChannelVersion,
+    createPolicyInsidersVersion,
+}
 
 /** Execute the entry's actual declarations; never evaluate its top-level build or filesystem operations. */
 async function loadChannelHarness(
@@ -234,10 +240,12 @@ describe("package-vsix release channels", () => {
         // A formal version tag of either channel documents that exact section.
         ["v0.14.0", "0.14.0"],
         ["dev-v0.13.0", "0.13.0"],
-        // Every untagged or non-version commit has no released section yet.
-        [null, UNRELEASED_SECTION],
-        ["nightly", UNRELEASED_SECTION],
-        ["insiders-0123456789abcdef0123456789abcdef01234567", UNRELEASED_SECTION],
+        // Every untagged or non-version commit documents the current section,
+        // which is the development one until a release freezes it. The
+        // extractor selects it with the literal keyword "current".
+        [null, "current"],
+        ["nightly", "current"],
+        ["insiders-0123456789abcdef0123456789abcdef01234567", "current"],
     ])("selects %s as the local development changelog section", async (tag, expected) => {
         const harness = await loadChannelHarness(
             "scripts/package-dev.mjs",

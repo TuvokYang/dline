@@ -92,6 +92,8 @@ export interface ConversationJournal {
      * disk, so the journal remains append-only.
      */
     rewind(input: { readonly operationId: string; readonly target: JournalWatermark }): Promise<JournalAppendResult>
+    /** Whether a rewind appended at the current tail can legally reach `target`, without rebuilding from genesis. */
+    canRewindTo?(target: JournalWatermark): Promise<boolean>
     watermark(): JournalWatermark
 }
 

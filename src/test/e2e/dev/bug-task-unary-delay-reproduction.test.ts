@@ -76,6 +76,7 @@ e2e.describe("An accepted turn-end with a delayed unary response", () => {
         const input = sidebar.getByTestId("chat-input")
         const feedback = "E2E_DELAYED_TURN_END_FEEDBACK"
         await input.fill(feedback)
+        await expect(sidebar.getByTestId("send-button")).toHaveAttribute("data-action", "send")
         await input.press("Enter")
         await expect.poll(() => marker(dlineDir, "dispatchInteraction")).toBe("started")
         await expect(sidebar.getByText("E2E_DELAYED_TURN_END_ACCEPTED", { exact: false }).last()).toBeVisible({

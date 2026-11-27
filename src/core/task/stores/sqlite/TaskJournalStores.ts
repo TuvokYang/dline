@@ -44,7 +44,7 @@ function contentOf(entry: JournalEntry): EntryContent {
 export class SqliteConversationJournal implements ConversationJournal {
     private current: JournalWatermark = { seq: 0 }
     private readonly entries: JournalEntry[] = []
-    private readonly operations = new Map<string, { readonly fingerprint: string; readonly entry: JournalEntry }>()
+    private readonly operations = new Map<string, { fingerprint?: string; readonly entry: JournalEntry }>()
     private projection: JournalProjectionIndex | undefined = new JournalProjectionIndex()
     private readonly transient = new Set<string>()
     private writeTail: Promise<void> = Promise.resolve()
@@ -89,6 +89,11 @@ export class SqliteConversationJournal implements ConversationJournal {
     async project(through?: JournalWatermark) {
         await this.writeTail
         return this.ensureProjection().project(through ?? this.current)
+    }
+
+    async canRewindTo(target: JournalWatermark): Promise<boolean> {
+        await this.writeTail
+        return this.ensureProjection().canRewindTo(target)
     }
 
     appendTransient(transientId: string): void {
@@ -156,7 +161,8 @@ export class SqliteConversationJournal implements ConversationJournal {
             // The row is already durable. Rebuild lazily rather than reporting a committed append as failed.
             this.projection = undefined
         }
-        this.operations.set(entry.operationId, { fingerprint: fingerprintOf(entry.kind, contentOf(entry)), entry })
+        // Compute operation fingerprints lazily on duplicate operationId checks instead of stringifying every row on open.
+        this.operations.set(entry.operationId, { entry })
         this.current = entry.watermark
     }
 
@@ -176,6 +182,7 @@ export class SqliteConversationJournal implements ConversationJournal {
     private idempotent(operationId: string, kind: JournalEntryKind, content: EntryContent): JournalAppendResult | undefined {
         const existing = this.operations.get(operationId)
         if (!existing) return undefined
+        existing.fingerprint ??= fingerprintOf(existing.entry.kind, contentOf(existing.entry))
         if (existing.fingerprint !== fingerprintOf(kind, content)) throw new Error(`Journal operation conflict: ${operationId}`)
         return { watermark: existing.entry.watermark, disposition: "existing" }
     }
@@ -192,7 +199,7 @@ export class SqliteConversationJournal implements ConversationJournal {
     }
 }
 
-/** Effect keys of published commands, stored in `journal.db` and mirrored in memory. */
+/** Effect keys of published commands, stored in `journal.db` and looked up on demand by primary key. */
 export class SqliteCommandPublicationStore implements CommandPublicationStore {
     private writeTail: Promise<void> = Promise.resolve()
 
@@ -201,19 +208,39 @@ export class SqliteCommandPublicationStore implements CommandPublicationStore {
         private readonly published: Set<string>,
     ) {}
 
+    /**
+     * Open without loading every historical publication row into memory.
+     *
+     * `effectKey` is the table's primary key, so misses resolve via an O(1) point
+     * query instead of scanning tens of thousands of completed commands on resume.
+     */
     static async open(store: UnifyStore<CommandPublicationRow>): Promise<SqliteCommandPublicationStore> {
-        const { records } = await store.query()
-        return new SqliteCommandPublicationStore(store, new Set(records.map((record) => record.effectKey)))
+        return new SqliteCommandPublicationStore(store, new Set())
     }
 
     async has(effectKey: string): Promise<boolean> {
         await this.writeTail
-        return this.published.has(effectKey)
+        if (this.published.has(effectKey)) return true
+        const { records } = await this.store.query({
+            where: eq(CommandPublicationRow.storage.fields.effectKey, effectKey),
+            limit: 1,
+        })
+        if (records.length === 0) return false
+        this.published.add(effectKey)
+        return true
     }
 
     mark(command: Command, effectKey = command.commandId): Promise<void> {
         const write = this.writeTail.then(async () => {
             if (this.published.has(effectKey)) return
+            const { records } = await this.store.query({
+                where: eq(CommandPublicationRow.storage.fields.effectKey, effectKey),
+                limit: 1,
+            })
+            if (records.length > 0) {
+                this.published.add(effectKey)
+                return
+            }
             await this.store.upsert([CommandPublicationRow.of(command, effectKey)])
             this.published.add(effectKey)
         })
@@ -228,17 +255,26 @@ export class SqliteBackgroundDeliveryLedger implements BackgroundDeliveryLedger 
 
     private constructor(
         private readonly store: UnifyStore<BackgroundDeliveryRow>,
-        private readonly records: Map<string, BackgroundDeliveryRecord>,
+        private readonly pending: Map<string, BackgroundDeliveryRecord>,
     ) {}
 
+    /**
+     * Load only unacknowledged deliveries into memory.
+     *
+     * Acknowledged deliveries carry full subagent/command output text that replay
+     * never needs; keeping them on disk avoids retaining megabytes of historical
+     * results while `stage` still verifies conflicts by primary key.
+     */
     static async open(store: UnifyStore<BackgroundDeliveryRow>): Promise<SqliteBackgroundDeliveryLedger> {
-        const { records } = await store.query()
+        const { records } = await store.query({
+            where: eq(BackgroundDeliveryRow.storage.fields.state, "pending"),
+        })
         return new SqliteBackgroundDeliveryLedger(store, new Map(records.map((row) => [row.entryId, row.toRecord()])))
     }
 
     stage(delivery: Omit<BackgroundDeliveryRecord, "state">): Promise<BackgroundDeliveryRecord> {
         return this.enqueue(async () => {
-            const existing = this.records.get(delivery.entryId)
+            const existing = this.pending.get(delivery.entryId) ?? (await this.readByEntryId(delivery.entryId))
             if (existing) {
                 if (
                     existing.producerKind !== delivery.producerKind ||
@@ -252,24 +288,32 @@ export class SqliteBackgroundDeliveryLedger implements BackgroundDeliveryLedger 
             }
             const record: BackgroundDeliveryRecord = { ...delivery, state: "pending" }
             await this.store.insert([BackgroundDeliveryRow.fromRecord(record)])
-            this.records.set(record.entryId, record)
+            this.pending.set(record.entryId, record)
             return record
         })
     }
 
     async listPending(): Promise<readonly BackgroundDeliveryRecord[]> {
         await this.writeTail
-        return [...this.records.values()].filter((record) => record.state === "pending")
+        return [...this.pending.values()]
     }
 
     acknowledge(entryId: string): Promise<void> {
         return this.enqueue(async () => {
-            const existing = this.records.get(entryId)
-            if (!existing || existing.state === "acknowledged") return
+            const existing = this.pending.get(entryId)
+            if (!existing) return
             const acknowledged: BackgroundDeliveryRecord = { ...existing, state: "acknowledged" }
             await this.store.upsert([BackgroundDeliveryRow.fromRecord(acknowledged)])
-            this.records.set(entryId, acknowledged)
+            this.pending.delete(entryId)
         })
+    }
+
+    private async readByEntryId(entryId: string): Promise<BackgroundDeliveryRecord | undefined> {
+        const { records } = await this.store.query({
+            where: eq(BackgroundDeliveryRow.storage.fields.entryId, entryId),
+            limit: 1,
+        })
+        return records[0]?.toRecord()
     }
 
     private enqueue<T>(operation: () => Promise<T>): Promise<T> {

@@ -7,7 +7,7 @@ import { McpServiceClient } from "@/services/grpc-client"
 import ServersToggleList from "./ServersToggleList"
 
 const ConfigureServersView = () => {
-    const { t } = useUiTranslation()
+    const { language, t } = useUiTranslation()
     const { mcpServers: servers, navigateToSettings, remoteConfigSettings } = useExtensionState()
 
     // Check if there are remote MCP servers configured
@@ -50,7 +50,13 @@ const ConfigureServersView = () => {
                         })
                     }
                 />{" "}
-                <VSCodeLink href="https://x.com/sdrzn/status/1867271665086074969" style={{ display: "inline" }}>
+                <VSCodeLink
+                    href={
+                        language === "zh-CN"
+                            ? "https://docs.dline.cc/zh-cn/mcp/mcp-overview/#演示"
+                            : "https://docs.dline.cc/mcp/mcp-overview/#demo"
+                    }
+                    style={{ display: "inline" }}>
                     {t("capabilities.mcp.demo")}
                 </VSCodeLink>
             </div>

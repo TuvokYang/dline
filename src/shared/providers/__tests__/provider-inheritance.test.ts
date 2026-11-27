@@ -116,7 +116,16 @@ describe.each(cases)("$provider inherited model capabilities", ({ provider, ance
 describe("provider and family boundaries", () => {
     it("enables Codex compatibility without inventing a default effort", () => {
         const result = resolveModel("openai-codex", "opaque-subscription-model", {})
-        expect(result.capabilities?.thinking?.effortLevels).toEqual(["none", "low", "medium", "high"])
+        expect(result.capabilities?.thinking?.effortLevels).toEqual([
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra",
+        ])
         expect(result.capabilities?.thinking?.defaultEnabled).toBe(true)
         expect(result.capabilities?.thinking?.defaultEffort).toBeUndefined()
     })

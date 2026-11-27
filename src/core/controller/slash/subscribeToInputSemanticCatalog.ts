@@ -5,10 +5,12 @@ import { toProtoInputSemanticCatalog } from "@shared/proto-conversions/input-sem
 import { Logger } from "@/shared/services/Logger"
 import { getRequestRegistry, type StreamingResponseHandler } from "../grpc-handler"
 import type { Controller } from "../index"
-import { refreshInputSemanticCatalog } from "./input-semantic-catalog"
+import { inputSemanticCatalogService, refreshInputSemanticCatalog } from "./input-semantic-catalog"
 
 // Per-controller subscriptions to isolate catalogs between independent webviews.
 const subs = new Map<Controller, Set<StreamingResponseHandler<WireCatalog>>>()
+const catalogListenerCleanups = new Map<Controller, () => void>()
+const deliveredRevisions = new WeakMap<StreamingResponseHandler<WireCatalog>, number>()
 
 /**
  * Subscribe to input semantic catalog revisions for a specific controller.
@@ -26,6 +28,13 @@ export async function subscribeToInputSemanticCatalog(
     if (!set) {
         set = new Set()
         subs.set(controller, set)
+        // Broadcast revision advances triggered outside explicit publication
+        // (such as first-submission `discovered()` or command-availability toggles)
+        // so the composer never stays pinned to a stale revision.
+        const unsubscribe = inputSemanticCatalogService(controller).onDidChange((catalog) => {
+            void sendInputSemanticCatalogEvent(controller, catalog)
+        })
+        catalogListenerCleanups.set(controller, unsubscribe)
     }
     set.add(responseStream)
 
@@ -33,7 +42,11 @@ export async function subscribeToInputSemanticCatalog(
         const current = subs.get(controller)
         if (current) {
             current.delete(responseStream)
-            if (current.size === 0) subs.delete(controller)
+            if (current.size === 0) {
+                subs.delete(controller)
+                catalogListenerCleanups.get(controller)?.()
+                catalogListenerCleanups.delete(controller)
+            }
         }
     }
 
@@ -49,6 +62,8 @@ export async function subscribeToInputSemanticCatalog(
         return
     }
 
+    if (deliveredRevisions.get(responseStream) === catalog.revision) return
+    deliveredRevisions.set(responseStream, catalog.revision)
     try {
         await responseStream(toProtoInputSemanticCatalog(catalog), false)
     } catch (error) {
@@ -77,11 +92,18 @@ export async function sendInputSemanticCatalogEvent(controller: Controller, cata
     const wire = toProtoInputSemanticCatalog(catalog)
     await Promise.all(
         Array.from(set).map(async (responseStream) => {
+            if (deliveredRevisions.get(responseStream) === catalog.revision) return
+            deliveredRevisions.set(responseStream, catalog.revision)
             try {
                 await responseStream(wire, false)
             } catch (error) {
                 Logger.error("Error sending input semantic catalog event:", error)
                 set.delete(responseStream)
+                if (set.size === 0) {
+                    subs.delete(controller)
+                    catalogListenerCleanups.get(controller)?.()
+                    catalogListenerCleanups.delete(controller)
+                }
             }
         }),
     )

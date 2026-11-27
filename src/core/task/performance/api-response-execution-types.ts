@@ -49,6 +49,8 @@ export interface ApiResponseExecutionRangeSnapshotQuery {
     readonly startMs: number
     readonly endMs: number
     readonly pageSize: number
+    /** Executions the window should still cover; see the round repository's `maxRounds`. */
+    readonly maxRounds?: number
 }
 
 export interface ApiResponseExecutionRepository {

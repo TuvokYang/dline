@@ -88,12 +88,24 @@ export class TaskActivityPersistence {
     async load(): Promise<TaskActivityRecord[]> {
         try {
             const store = await this.store()
-            const stored = await store.read()
+            const stored = await store.readRecent()
             if (stored.length > 0) return sanitizeActivities(stored, this.taskId)
             return await this.importLegacy(store)
         } catch (error) {
             Logger.warn("[TaskActivityPersistence] Failed to load activity history", error)
             return []
+        }
+    }
+
+    /** Look up one persisted activity on demand when it sits outside the recent hydration window. */
+    async loadById(activityId: string): Promise<TaskActivityRecord | undefined> {
+        try {
+            const store = await this.store()
+            const stored = await store.readById(activityId)
+            return stored ? sanitizeActivity(stored, this.taskId) : undefined
+        } catch (error) {
+            Logger.warn("[TaskActivityPersistence] Failed to load activity by id", error)
+            return undefined
         }
     }
 
@@ -105,7 +117,7 @@ export class TaskActivityPersistence {
     async loadIncrementally(shouldContinue: () => boolean): Promise<TaskActivityRecord[]> {
         try {
             const store = await this.store()
-            const stored = await store.readIncrementally(shouldContinue)
+            const stored = await store.readRecent({ shouldContinue })
             if (!shouldContinue()) return []
             if (stored.length > 0) return sanitizeActivities(stored, this.taskId)
             return await this.importLegacy(store)

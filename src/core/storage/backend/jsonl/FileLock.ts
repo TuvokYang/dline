@@ -364,7 +364,13 @@ export class FileLock {
         } catch (error) {
             if ((error as NodeJS.ErrnoException).code === "ENOENT") {
                 this.ownedLocks.delete(jsonlPath)
+                return
             }
+            // A lock this instance still records as owned must be removed even when
+            // its payload cannot be read back. Returning here left the file behind,
+            // and readLease treats a live ownerId as active, so the process then
+            // blocked itself on a lock it had already finished with.
+            await this.unlinkOwnedLock(lockPath, jsonlPath)
             return
         }
         if (payload.ownerId !== ownerId) {
@@ -389,6 +395,31 @@ export class FileLock {
                 await new Promise<void>((resolve) => setTimeout(resolve, RELEASE_RETRY_DELAYS_MS[attempt - 1] ?? 0))
             }
         }
+    }
+
+    /**
+     * Remove a lock this instance still records as owned when its payload could not
+     * be read back.
+     *
+     * Ownership is already established by {@link ownedLocks}: this instance acquired
+     * the lock and has not released it. A payload that cannot be parsed therefore
+     * describes a lock that is ours but unverifiable, not one another owner holds.
+     * Leaving it behind is worse than a failed read: {@link readLease} keeps
+     * treating a live owner as active, so the process deadlocks against itself for
+     * the rest of its life with no automatic release left to retry.
+     */
+    private async unlinkOwnedLock(lockPath: string, jsonlPath: string): Promise<void> {
+        try {
+            await fs.unlink(lockPath)
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+                Logger.warn(
+                    `[FileLock] Could not remove an owned lock whose payload was unreadable: path=${path.basename(lockPath)}`,
+                    error,
+                )
+            }
+        }
+        this.ownedLocks.delete(jsonlPath)
     }
 
     /**

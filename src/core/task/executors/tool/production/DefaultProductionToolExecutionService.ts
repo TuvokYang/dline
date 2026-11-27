@@ -13,7 +13,7 @@ import { ToolExecutionObservation, type ToolFailureObservation } from "../../../
 import type { ToolInvocationEnvelope } from "../../../stores/payload/TaskPayloadEnvelopes"
 import { approvalInteractionId } from "../../../tools/approval-interaction"
 import { normalizeToolExecutionResult, type ToolPostCommitDirective } from "../../../tools/ToolExecutionResult"
-import type { ToolExecutorCoordinator } from "../../../tools/ToolExecutorCoordinator"
+import { type ToolExecutorCoordinator, withdrawUnsettledCard } from "../../../tools/ToolExecutorCoordinator"
 import type { TaskConfig } from "../../../tools/types/TaskConfig"
 import { ToolDisplayUtils } from "../../../tools/utils/ToolDisplayUtils"
 import { type ToolResultBudget, ToolResultUtils } from "../../../tools/utils/ToolResultUtils"
@@ -342,6 +342,8 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
             if (admission.rejection.reason === "invalid_parameters") config.taskState.consecutiveMistakeCount++
             if (admission.rejection.presentation !== "model_only") {
                 await presentToolRefusal(config, block, admission.rejection.message)
+            } else {
+                await withdrawUnsettledCard(config, block)
             }
             return serializeResult(input.invocation, formatResponse.toolError(admission.rejection.message), description, {
                 stage: "validation",
@@ -364,12 +366,14 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
                 presentation: block.params.command!,
                 existingTs: block.ts,
             })
-            if (outcome.actionId !== "approve")
+            if (outcome.actionId !== "approve") {
+                await withdrawUnsettledCard(config, block)
                 return serializeResult(
                     input.invocation,
                     outcome.origin === "timeout" ? formatResponse.awayCommandTimeout() : formatResponse.toolDenied(),
                     description,
                 )
+            }
             config = { ...config, admissionOutcome: { ...outcome, source: "manual" } }
         }
         const boundary = await reviewRegisteredToolBoundary(block, block.name as DlineDefaultTool, snapshot)

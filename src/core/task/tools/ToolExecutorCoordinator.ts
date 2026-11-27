@@ -184,16 +184,28 @@ export async function presentToolDenial(handler: IToolHandler | undefined, confi
 }
 
 /**
- * Remove the card a refused call drew while it streamed.
+ * Remove a streaming preview card that a tool call never moved to a terminal state.
  *
- * The call never ran and the generic denial row reports the refusal, so a card
- * still marked partial would otherwise keep spinning beside it forever. A card
- * its handler already settled is left alone.
+ * Handlers draw a `partial: true` preview row while arguments stream. When a call
+ * is refused, returns a tool error without finalizing its row, throws, or is
+ * skipped before execution, leaving that row partial keeps an invisible or
+ * spinning live row in storage and blocks ActivityFold from collapsing the round.
+ * A card its handler already settled (`partial !== true`) is left untouched.
  */
-async function withdrawUnsettledCard(config: TaskConfig, block: ToolUse): Promise<void> {
-    const card = config.messageState?.clineMessages.find((message) => message.ts === block.ts)
+export async function withdrawUnsettledCard(config: TaskConfig, block: ToolUse): Promise<void> {
+    if (block.ts === undefined) return
+    const card = config.messageState?.clineMessages?.find((message) => message.ts === block.ts)
     if (card?.partial !== true) return
-    await config.messageState.removeMessagesByTs([block.ts])
+    await config.messageState.removeMessagesByTs?.([block.ts])
+    await config.callbacks?.postStateToWebview?.()
+}
+
+async function withdrawUnsettledCardSafely(config: TaskConfig, block: ToolUse): Promise<void> {
+    try {
+        await withdrawUnsettledCard(config, block)
+    } catch (error) {
+        Logger.warn("[ToolExecutorCoordinator] Failed to withdraw unsettled tool card", error)
+    }
 }
 
 /**
@@ -389,48 +401,52 @@ export class ToolExecutorCoordinator {
         block: ToolUse,
         policy?: (config: TaskConfig, block: ToolUse) => Promise<ToolHandlerResult | undefined>,
     ): Promise<ToolHandlerResult> {
-        const handler = this.getHandler(block.name)
-        if (!handler) {
-            const refusal = findHandlerlessExplicitRefusal(block.name, config.explicitInstructions)
-            if (refusal) return formatResponse.toolError(explicitToolRefusalMessage(block.name, refusal))
-            throw new Error(`No handler registered for tool: ${block.name}`)
-        }
-        if (block.dline_tid) this.preparedHandlers.delete(block.dline_tid)
-        const authorized = this.authorize(config, handler.name)
-        if (!authorized.ok) {
-            // The code is what the model reads back, so it can tell a missing grant
-            // from a spent one instead of retrying a call that can never run.
-            return formatResponse.toolError(explicitToolRefusalMessage(block.name, authorized.code))
-        }
-        // The request is already on the provider wire. A file mutation enters the
-        // checkpoint sequence after the admitted round baseline and settles before
-        // a later round may inspect workspace changes.
-        let settleMutation: (() => void) | undefined
-        if (mayMutateWorkspace(block)) {
-            try {
-                settleMutation = await authorized.config.callbacks.beginWorkspaceMutation?.()
-            } catch (error) {
-                // Checkpoints are a side feature. A failed ticket loses restore
-                // coverage, but must not turn an admitted file tool into a deadlock.
-                Logger.warn("[ToolExecutorCoordinator] Workspace mutation ticket failed; continuing tool execution", error)
-            }
-        }
-        // Effects that ride on a call without belonging to any tool. The surface
-        // decides which of them it has, so a task with no checklist and no
-        // workspace history runs the same tools without supplying either.
-        const progress = new ToolCallProgress(authorized.config, block, handler.name)
-        const scopedConfig = config.interactions
-            ? { ...authorized.config, interactions: progress.interactions(config.interactions) }
-            : authorized.config
-        let result: ToolHandlerResult
         try {
-            await scopedConfig.settlePrecedingProgress?.()
-            const automatic = await policy?.(scopedConfig, block)
-            result = automatic === undefined ? await handler.execute(scopedConfig, block) : automatic
+            const handler = this.getHandler(block.name)
+            if (!handler) {
+                const refusal = findHandlerlessExplicitRefusal(block.name, config.explicitInstructions)
+                if (refusal) return formatResponse.toolError(explicitToolRefusalMessage(block.name, refusal))
+                throw new Error(`No handler registered for tool: ${block.name}`)
+            }
+            if (block.dline_tid) this.preparedHandlers.delete(block.dline_tid)
+            const authorized = this.authorize(config, handler.name)
+            if (!authorized.ok) {
+                // The code is what the model reads back, so it can tell a missing grant
+                // from a spent one instead of retrying a call that can never run.
+                return formatResponse.toolError(explicitToolRefusalMessage(block.name, authorized.code))
+            }
+            // The request is already on the provider wire. A file mutation enters the
+            // checkpoint sequence after the admitted round baseline and settles before
+            // a later round may inspect workspace changes.
+            let settleMutation: (() => void) | undefined
+            if (mayMutateWorkspace(block)) {
+                try {
+                    settleMutation = await authorized.config.callbacks.beginWorkspaceMutation?.()
+                } catch (error) {
+                    // Checkpoints are a side feature. A failed ticket loses restore
+                    // coverage, but must not turn an admitted file tool into a deadlock.
+                    Logger.warn("[ToolExecutorCoordinator] Workspace mutation ticket failed; continuing tool execution", error)
+                }
+            }
+            // Effects that ride on a call without belonging to any tool. The surface
+            // decides which of them it has, so a task with no checklist and no
+            // workspace history runs the same tools without supplying either.
+            const progress = new ToolCallProgress(authorized.config, block, handler.name)
+            const scopedConfig = config.interactions
+                ? { ...authorized.config, interactions: progress.interactions(config.interactions) }
+                : authorized.config
+            let result: ToolHandlerResult
+            try {
+                await scopedConfig.settlePrecedingProgress?.()
+                const automatic = await policy?.(scopedConfig, block)
+                result = automatic === undefined ? await handler.execute(scopedConfig, block) : automatic
+            } finally {
+                settleMutation?.()
+            }
+            return progress.finish(result)
         } finally {
-            settleMutation?.()
+            await withdrawUnsettledCardSafely(config, block)
         }
-        return progress.finish(result)
     }
 
     /**

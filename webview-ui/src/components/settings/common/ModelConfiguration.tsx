@@ -6,6 +6,7 @@ import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { useEffect, useId, useState } from "react"
 import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ProfileDisclosure, ProfileField, ProfileInlineGrid, ProfileSection, ProfileSectionTitle } from "../profile-ui"
+import { supportsBrowserUse } from "../utils/pricingUtils"
 import { DebouncedTextField } from "./DebouncedTextField"
 import { ContextTierEditor } from "./ModelTierEditor"
 import { PricingEditor } from "./PricingEditor"
@@ -57,6 +58,9 @@ interface ModelConfigurationProps {
     // Update callback for the hosted server tool switches.
     onDisabledServerToolsUpdate?: (disabledServerTools: ServerTool[]) => void
 
+    // Explicit Search choice for the selected model when its hosted tools are undeclared.
+    onWebSearchUpdate?: (enabled: boolean) => void
+
     // Which fields to display (data-driven)
     fields: {
         // Capabilities related fields
@@ -93,7 +97,7 @@ interface ModelConfigurationProps {
 /**
  * Reusable Model Configuration component for provider settings.
  * Displays a collapsible section with model capabilities and pricing.
- * All edits are stored in provider-specific capabilities and pricing.
+ * Capability and pricing edits use provider overrides; undeclared Search choices are model-scoped.
  */
 export const ModelConfiguration = ({
     capabilities: capabilityOverrides,
@@ -105,6 +109,7 @@ export const ModelConfiguration = ({
     peakOffPeakLabels,
     disabledServerTools,
     onDisabledServerToolsUpdate,
+    onWebSearchUpdate,
     fields,
     defaults,
     tiersEditable = false,
@@ -126,6 +131,7 @@ export const ModelConfiguration = ({
     // Extract current values from provider overrides
     const capabilities: ModelCapabilities = capabilityOverrides ?? ({} as ModelCapabilities)
     const temperature = capabilities.temperature
+    const defaultBrowser = supportsBrowserUse({ capabilities: defaults?.capabilities })
 
     useEffect(() => {
         setPendingChecks((pending) => {
@@ -144,16 +150,19 @@ export const ModelConfiguration = ({
                 const persisted = (() => {
                     switch (field) {
                         case "supportsImages":
-                            return capabilities.supportsImages ?? false
+                            return capabilities.supportsImages ?? defaults?.capabilities?.supportsImages ?? false
                         case "supportsPromptCache":
                             return capabilities.supportsPromptCache ?? defaults?.capabilities?.supportsPromptCache ?? true
                         case "supportsTools":
                             return capabilities.supportsTools ?? defaults?.capabilities?.supportsTools ?? false
                         case "hostedWebSearchEnabled":
                         case "hostedWebFetchEnabled":
-                            return isServerToolEnabled(HOSTED_TOOL_BY_CHECK[field], disabledServerTools)
+                            return (
+                                declaredServerTools(defaults?.capabilities).includes(HOSTED_TOOL_BY_CHECK[field]) &&
+                                isServerToolEnabled(HOSTED_TOOL_BY_CHECK[field], disabledServerTools)
+                            )
                         case "supportsBrowserAction":
-                            return capabilities.supportsBrowserAction ?? defaults?.capabilities?.supportsBrowserAction ?? false
+                            return capabilities.supportsBrowserAction ?? capabilities.supportsImages ?? defaultBrowser
                     }
                 })()
                 if (expected !== undefined && persisted === expected) {
@@ -173,9 +182,11 @@ export const ModelConfiguration = ({
         capabilities.supportsTools,
         capabilities.supportsBrowserAction,
         disabledServerTools,
+        defaults?.capabilities?.tools,
         defaults?.capabilities?.supportsTools,
         defaults?.capabilities?.supportsPromptCache,
-        defaults?.capabilities?.supportsBrowserAction,
+        defaults?.capabilities?.supportsImages,
+        defaultBrowser,
         draftChecks,
     ])
 
@@ -199,14 +210,18 @@ export const ModelConfiguration = ({
     }
 
     /**
-     * Toggle one hosted web tool switch. This writes the profile-owned disable
-     * list and never the model's capability declaration, so turning the switch off
-     * and on again cannot erase what the model is actually able to do.
+     * Declared tools use the profile's disable list; an undeclared Search choice
+     * also records explicit model-scoped intent through the provider callback.
+     * Neither path changes the catalog declaration.
      */
     const updateHostedToolCheck = (field: HostedToolCheckField, value: boolean) => {
         setDraftChecks((draft) => ({ ...draft, [field]: value }))
         setPendingChecks((pending) => ({ ...pending, [field]: value }))
-        onDisabledServerToolsUpdate?.(withServerToolSwitch(disabledServerTools, HOSTED_TOOL_BY_CHECK[field], value))
+        if (field === "hostedWebSearchEnabled" && onWebSearchUpdate) {
+            onWebSearchUpdate(value)
+        } else {
+            onDisabledServerToolsUpdate?.(withServerToolSwitch(disabledServerTools, HOSTED_TOOL_BY_CHECK[field], value))
+        }
     }
 
     /** Persist context tier changes while keeping the editor responsive before profile echo. */
@@ -229,7 +244,8 @@ export const ModelConfiguration = ({
 
     const capabilityFields = fields.capabilities ?? []
     const pricingFields = fields.pricing ?? []
-    const supportsImages = draftChecks.supportsImages ?? capabilities.supportsImages ?? false
+    const supportsImages =
+        draftChecks.supportsImages ?? capabilities.supportsImages ?? defaults?.capabilities?.supportsImages ?? false
     const supportsPromptCache =
         draftChecks.supportsPromptCache ?? capabilities.supportsPromptCache ?? defaults?.capabilities?.supportsPromptCache ?? true
     const supportsTools =
@@ -237,15 +253,13 @@ export const ModelConfiguration = ({
     const modelServerTools = declaredServerTools(defaults?.capabilities)
     const modelDeclaresHostedWebSearch = modelServerTools.includes(ServerTool.WEB_SEARCH)
     const hostedWebSearchEnabled =
-        draftChecks.hostedWebSearchEnabled ?? isServerToolEnabled(ServerTool.WEB_SEARCH, disabledServerTools)
+        draftChecks.hostedWebSearchEnabled ??
+        (modelDeclaresHostedWebSearch && isServerToolEnabled(ServerTool.WEB_SEARCH, disabledServerTools))
     const modelDeclaresHostedWebFetch = modelServerTools.includes(ServerTool.WEB_FETCH)
     const hostedWebFetchEnabled =
         draftChecks.hostedWebFetchEnabled ?? isServerToolEnabled(ServerTool.WEB_FETCH, disabledServerTools)
     const supportsBrowserAction =
-        draftChecks.supportsBrowserAction ??
-        capabilities.supportsBrowserAction ??
-        defaults?.capabilities?.supportsBrowserAction ??
-        false
+        draftChecks.supportsBrowserAction ?? capabilities.supportsBrowserAction ?? capabilities.supportsImages ?? defaultBrowser
     const hasOptionsFields =
         capabilityFields.includes("supportsImages") ||
         capabilityFields.includes("supportsPromptCache") ||
@@ -295,15 +309,19 @@ export const ModelConfiguration = ({
                         ) : null}
                         {capabilityFields.includes("hostedWebSearch") ? (
                             <VSCodeCheckbox
-                                checked={modelDeclaresHostedWebSearch && hostedWebSearchEnabled}
-                                disabled={!modelDeclaresHostedWebSearch}
+                                checked={hostedWebSearchEnabled}
+                                disabled={!modelDeclaresHostedWebSearch && !onWebSearchUpdate}
                                 onChange={(e: Event | React.FormEvent<HTMLElement>) =>
                                     updateHostedToolCheck(
                                         "hostedWebSearchEnabled",
                                         (e.target as HTMLInputElement | null)?.checked === true,
                                     )
                                 }>
-                                {modelDeclaresHostedWebSearch ? t("settings.ui.hostedSearch") : t("settings.ui.noHostedSearch")}
+                                {onWebSearchUpdate
+                                    ? t("settings.ui.tryHostedSearch")
+                                    : modelDeclaresHostedWebSearch
+                                      ? t("settings.ui.hostedSearch")
+                                      : t("settings.ui.noHostedSearch")}
                             </VSCodeCheckbox>
                         ) : null}
                         {capabilityFields.includes("hostedWebFetch") ? (

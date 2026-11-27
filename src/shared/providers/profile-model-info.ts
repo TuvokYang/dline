@@ -4,6 +4,7 @@ import type { ApiProfile } from "@shared/proto/dline/profile"
 import { prioritizeApiFormat, resolveApiFormat } from "./api-format"
 import { buildEffectiveModelInfo, type ProviderModelOverrides } from "./effective-model-info"
 import { inheritModelInfo } from "./model-inheritance"
+import { resolveSearchModel, supportsSearchOverride } from "./model-web-search"
 import { resolveOpenAIModel } from "./openai-model-info"
 import { type OpenCodeMode, type ProviderRegion, resolveCatalogProviderKey } from "./provider-catalog-key"
 import { readProviderConfigField } from "./provider-config"
@@ -253,7 +254,10 @@ export function resolveProfileModelInfo(
             : undefined
     const configuredBase = configuredBaseId ? providerModels?.models?.[configuredBaseId] : undefined
     const matchingModel = profile.modelInfo?.id === modelId ? profile.modelInfo : undefined
-    const selectedBase = registryModel ?? configuredBase ?? matchingModel ?? (profile.modelId ? undefined : defaultModel)
+    const selected = registryModel ?? configuredBase ?? matchingModel ?? (profile.modelId ? undefined : defaultModel)
+    const selectedBase = supportsSearchOverride(profile.provider)
+        ? resolveSearchModel(selected ?? { id: modelId }, matchingModel)
+        : selected
     const models = providerModels?.models ?? {}
     const baseModel =
         profile.provider === "openai" || profile.provider === "openai-codex"

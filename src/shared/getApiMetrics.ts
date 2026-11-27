@@ -152,7 +152,7 @@ export function getLastApiReqTotalTokens(messages: UiMessage[]): number {
  * @param messages - An array of UiMessage objects to search.
  * @returns The text of the last task_progress message, or null if none found.
  */
-export function getLastTaskProgressText(messages: UiMessage[]): string | null {
+export function getLastTaskProgressText(messages: readonly UiMessage[]): string | null {
     for (let i = messages.length - 1; i >= 0; i--) {
         const m = messages[i]
         if (m.type === "say" && m.say === "task_progress" && m.text) {

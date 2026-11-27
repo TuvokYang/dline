@@ -17,7 +17,7 @@ import { HostProvider } from "@/hosts/host-provider"
 import { recordPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
 import { Logger } from "@/shared/services/Logger"
-import { fileExistsAtPath, isDirectory } from "@/utils/fs"
+import { isDirectory } from "@/utils/fs"
 import { Controller } from ".."
 import { rememberDiscoveredToggles } from "./capability-discovery-cache"
 
@@ -35,10 +35,19 @@ const warnedPaths = new Set<string>()
 async function scanSubagentsDirectory(dirPath: string): Promise<CapabilityScanResult<SubagentInfo>> {
     const subagents: SubagentInfo[] = []
 
-    if (!(await fileExistsAtPath(dirPath)) || !(await isDirectory(dirPath))) {
+    // "Missing" is a complete answer; "could not tell" is not. utils/fs collapses
+    // every failure into false, which would report an unreadable directory as an
+    // empty one and let orphan pruning delete overrides for files that still exist.
+    try {
+        await fs.stat(dirPath)
+    } catch (error) {
+        return (error as NodeJS.ErrnoException).code === "ENOENT" ? completeScan(subagents) : incompleteScan(subagents)
+    }
+    if (!(await isDirectory(dirPath))) {
         return completeScan(subagents)
     }
 
+    let complete = true
     try {
         const entries = await fs.readdir(dirPath)
 
@@ -80,6 +89,9 @@ async function scanSubagentsDirectory(dirPath: string): Promise<CapabilityScanRe
                     }),
                 )
             } catch (error) {
+                // A file that exists but cannot be parsed is not evidence that it
+                // disappeared, so the scan stops being authoritative for pruning.
+                complete = false
                 if (!warnedPaths.has(filePath)) {
                     warnedPaths.add(filePath)
                     Logger.warn(`Failed to parse subagent config: ${filePath}`, error)
@@ -91,7 +103,7 @@ async function scanSubagentsDirectory(dirPath: string): Promise<CapabilityScanRe
         return incompleteScan(subagents)
     }
 
-    return completeScan(subagents)
+    return complete ? completeScan(subagents) : incompleteScan(subagents)
 }
 
 /**
@@ -140,6 +152,7 @@ export async function refreshSubagents(controller: Controller): Promise<Refreshe
         const visibleGlobalSubagents = globalSubagents.filter((agent) => !localNames.has(agent.name))
         const discoveredGlobalToggles = Object.fromEntries(globalSubagents.map((agent) => [agent.path, true]))
         const globalToggles = resolveCapabilityToggles(controller.stateManager, "subagents", discoveredGlobalToggles)
+        rememberDiscoveredToggles(controller, "subagents", discoveredGlobalToggles, globalScan.complete, "global")
         for (const agent of visibleGlobalSubagents) {
             agent.enabled = globalToggles[agent.path] !== false
         }
@@ -195,9 +208,10 @@ export async function refreshSubagents(controller: Controller): Promise<Refreshe
                 `[CapabilityPerf] phase=subagents_refresh_error taskId=${controller.task?.taskId ?? "none"} durationMs=${Math.round(performance.now() - startedAt)} directories=${scannedDirectories}`,
             )
         }
-        return RefreshedSubagents.create({
-            globalSubagents: [],
-            localSubagents: [],
-        })
+        // Returning empty arrays here reported a failed read as "there are no
+        // subagents", which cleared the panel instead of leaving the last known
+        // list in place. The caller owns that last result, so the failure has to
+        // reach it.
+        throw error
     }
 }

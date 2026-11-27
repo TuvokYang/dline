@@ -423,6 +423,9 @@ await withSignalSafeCleanup(async (cleanups) => {
         fs.mkdirSync(destinationDirectory, { recursive: true })
     }
 
+    // The Webview build reads this to name the packaged build in What's New.
+    process.env.DLINE_PACKAGING_VERSION = pkg.version
+
     const preRelease = channel === PRE_RELEASE_CHANNEL
     console.log(
         `[package-vsix] Packaging through the VSCE API${preRelease ? " as a pre-release" : ""}${resolvedOutputPath ? `: ${resolvedOutputPath}` : ""}`,

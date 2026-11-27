@@ -31,14 +31,21 @@ export interface FoldContext {
     readonly checkedOutOwners: ReadonlySet<number>
     /** Request round of every message, indexed on the full transcript. */
     readonly rounds: RequestRounds
+    /** Highest request round reached in the transcript; earlier rounds cannot still be streaming. */
+    readonly latestRound?: number
 }
 
 export function buildFoldContext(messages: readonly UiMessage[], rounds: RequestRounds): FoldContext {
+    let latestRound = 0
+    for (const round of rounds.values()) {
+        if (round > latestRound) latestRound = round
+    }
     return {
         failedTs: failedRowTimestamps(messages),
         commandEnds: indexCommandEnds(messages),
         checkedOutOwners: checkedOutAttachmentOwners(messages),
         rounds,
+        latestRound,
     }
 }
 
@@ -206,8 +213,26 @@ export function failedWorkUnits(message: UiMessage, context: FoldContext): numbe
     return Math.max(1, reported)
 }
 
+/**
+ * Whether a low-stakes read row is an orphaned streaming preview left behind by
+ * a round the transcript has already moved past.
+ *
+ * `ToolGroupRenderer` already skips `partial: true` low-stakes rows, so an
+ * abandoned preview from a finished round draws nothing; keeping it `"live"`
+ * traps its entire `ExplorationRun` outside `ActivityFold`. A partial row in
+ * the latest round still stays `"live"` while streaming.
+ */
+function isOrphanedPartialReadPreview(message: UiMessage, context: FoldContext): boolean {
+    if (message.partial !== true || message.type !== "say" || message.say !== "tool") return false
+    if (workKindOf(message) !== "read") return false
+    const round = context.rounds.get(message.ts)
+    return round !== undefined && round > 0 && context.latestRound !== undefined && round < context.latestRound
+}
+
 export function rowState(message: UiMessage, context: FoldContext): RowState {
-    if (message.partial === true) return "live"
+    if (message.partial === true) {
+        return isOrphanedPartialReadPreview(message, context) ? "settled" : "live"
+    }
     if (context.failedTs.has(message.ts)) return "failed"
 
     if (message.type === "ask") {

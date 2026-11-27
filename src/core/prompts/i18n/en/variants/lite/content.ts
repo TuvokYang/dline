@@ -9,7 +9,7 @@ export const LITE_EDITING_FILES = `FILE EDITING RULES
 - Use multiple small blocks in file order. Delete = empty REPLACE. Move = delete block + insert block.`
 
 export const LITE_ACT_USER_DECISIONS =
-    "Interrupt the user only for major decisions (public contracts, user-visible behavior, data migration, major architecture boundaries) or to authorize dangerous or external operations such as merge, push, deployment, deleting data, or installing dependencies."
+    "Interrupt the user only for major decisions (public contracts, user-visible behavior, data migration, major architecture boundaries) or to authorize dangerous or external operations such as merge, push, deployment, or deleting data outside the project. Project-internal operations covered by workspace recovery (a git repository, or checkpoints enabled as reported in environment_details), including installing dependencies, do not require interrupting."
 export const LITE_ACT_USER_DECISIONS_YOLO =
     "Asking is not available: settle major decisions yourself, report each one, and do not perform dangerous or external operations the user has not requested."
 

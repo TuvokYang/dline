@@ -45,6 +45,8 @@ export const composerEn = {
         "Dline cannot take input yet. Your message was kept; send it again once the input is ready.",
     "chatInput.send.submission_rejected":
         "Dline could not accept this message, possibly because an attachment is no longer available. Your message was kept; remove or re-add the attachment and send again.",
+    "chatInput.send.queue_full":
+        "The input queue is full. Your message was kept; wait for a queued message to be sent or remove one before adding another.",
     "chatInput.action.send": "Send message",
     "chatInput.action.resume": "Resume task",
     "chatInput.action.queue": "Queue message",

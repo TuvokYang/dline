@@ -15,7 +15,7 @@ import { ProfileField, ProfileSection, ProfileSectionTitle } from "../profile-ui
 import { flushPendingDebouncedInputs } from "../utils/useDebouncedInput"
 import { DailyPricing } from "./DailyPricing"
 import { DebouncedTextField } from "./DebouncedTextField"
-import { appendPricingTier, PricingTierEditor } from "./ModelTierEditor"
+import { PricingTierEditor } from "./ModelTierEditor"
 import { PriceSetFields } from "./PriceSetFields"
 import { TimeWindowEditor } from "./TimeWindowEditor"
 
@@ -194,22 +194,6 @@ export function PricingEditor({
                         readOnly={readOnly}
                         showCachePrices={showCachePrices}
                     />
-                    {!readOnly && tiersEditable && (
-                        <VSCodeButton
-                            onClick={() =>
-                                afterInputFlush(() => {
-                                    const prices = current.current.strategy!.flat!.prices ?? {}
-                                    publish({
-                                        currency: current.current.currency,
-                                        strategy: {
-                                            contextWindow: { bands: appendPricingTier([{ prices }]) },
-                                        },
-                                    })
-                                })
-                            }>
-                            {t("settings.ui.addPricingTier")}
-                        </VSCodeButton>
-                    )}
                 </>
             )}
             {shape === "contextWindow" && (

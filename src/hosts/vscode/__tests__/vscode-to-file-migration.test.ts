@@ -160,7 +160,7 @@ describe("vscode-to-file-migration", () => {
             const mockCtx = createMockVSCodeContext()
             mockCtx._globalStateStore.set("mode", "plan") // should be skipped
             mockCtx._secretsStore.set("apiKey", "sk-test") // should be skipped
-            mockCtx._workspaceStateStore.set("localClineRulesToggles", { "rule-1": true })
+            mockCtx._workspaceStateStore.set("mcpServersToggles", { "server-1": true })
 
             const result = await exportVSCodeStorageToSharedFiles(mockCtx as any, storageContext)
 
@@ -170,8 +170,8 @@ describe("vscode-to-file-migration", () => {
             result.secretsCount.should.equal(0)
             // Workspace state SHOULD have been migrated
             result.workspaceStateCount.should.equal(1)
-            const stored = storageContext.workspaceState.get("localClineRulesToggles") as any
-            stored.should.deepEqual({ "rule-1": true })
+            const stored = storageContext.workspaceState.get("mcpServersToggles") as any
+            stored.should.deepEqual({ "server-1": true })
             // Workspace sentinel should now be set
             storageContext.workspaceState.get("__vscodeMigrationVersion")?.should.equal(2)
         })
@@ -325,30 +325,34 @@ describe("vscode-to-file-migration", () => {
     })
 
     describe("workspace state migration", () => {
-        it("should migrate workspace state keys", async () => {
-            const toggles = { "rule-1": true, "rule-2": false }
+        it("should migrate workspace state keys and drop retired toggle maps", async () => {
+            const toggles = { "server-1": true, "server-2": false }
             const mockCtx = createMockVSCodeContext()
-            mockCtx._workspaceStateStore.set("localClineRulesToggles", toggles)
+            mockCtx._workspaceStateStore.set("mcpServersToggles", toggles)
+            // The retired capability toggle maps are no longer carried over: nothing
+            // consumes them any more, so transferring them would only keep dead data.
+            mockCtx._workspaceStateStore.set("localClineRulesToggles", { "rule-1": true })
 
             const result = await exportVSCodeStorageToSharedFiles(mockCtx as any, storageContext)
 
             result.migrated.should.be.true()
             result.workspaceStateCount.should.equal(1)
-            const stored = storageContext.workspaceState.get("localClineRulesToggles") as any
+            const stored = storageContext.workspaceState.get("mcpServersToggles") as any
             stored.should.deepEqual(toggles)
+            ;(storageContext.workspaceState.get("localClineRulesToggles") === undefined).should.be.true()
         })
 
         it("should NOT overwrite existing workspace state", async () => {
-            const existingToggles = { "rule-existing": true }
-            storageContext.workspaceState.set("localClineRulesToggles", existingToggles)
+            const existingToggles = { "server-existing": true }
+            storageContext.workspaceState.set("mcpServersToggles", existingToggles)
 
             const mockCtx = createMockVSCodeContext()
-            mockCtx._workspaceStateStore.set("localClineRulesToggles", { "rule-vscode": true })
+            mockCtx._workspaceStateStore.set("mcpServersToggles", { "server-vscode": true })
 
             const result = await exportVSCodeStorageToSharedFiles(mockCtx as any, storageContext)
 
             result.migrated.should.be.true()
-            const stored = storageContext.workspaceState.get("localClineRulesToggles") as any
+            const stored = storageContext.workspaceState.get("mcpServersToggles") as any
             stored.should.deepEqual(existingToggles)
         })
     })

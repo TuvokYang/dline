@@ -3,7 +3,7 @@ import type { UiMessage } from "@shared/ExtensionMessage"
 import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import type { IToolHandler } from "../ToolExecutorCoordinator"
-import { presentToolDenial } from "../ToolExecutorCoordinator"
+import { presentToolDenial, ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
 import type { TaskConfig } from "../types/TaskConfig"
 
 const CARD_TS = 1_700_000_000_000
@@ -18,8 +18,12 @@ function card(partial: boolean): UiMessage {
 
 function harness(rows: UiMessage[]) {
     const removeMessagesByTs = vi.fn(async (_ts: readonly number[]) => {})
-    const config = { messageState: { clineMessages: rows, removeMessagesByTs } } as unknown as TaskConfig
-    return { config, removeMessagesByTs }
+    const postStateToWebview = vi.fn(async () => {})
+    const config = {
+        messageState: { clineMessages: rows, removeMessagesByTs },
+        callbacks: { postStateToWebview },
+    } as unknown as TaskConfig
+    return { config, removeMessagesByTs, postStateToWebview }
 }
 
 const plainHandler: IToolHandler = {
@@ -65,5 +69,79 @@ describe("presentToolDenial", () => {
 
         expect(presentDenial).toHaveBeenCalledOnce()
         expect(removeMessagesByTs).not.toHaveBeenCalled()
+    })
+})
+
+describe("ToolExecutorCoordinator.execute unsettled partial card cleanup", () => {
+    it("withdraws an unsettled partial preview card when a handler returns a tool error without finalizing it", async () => {
+        const { config, removeMessagesByTs, postStateToWebview } = harness([card(true)])
+        const coordinator = new ToolExecutorCoordinator()
+        coordinator.register({
+            name: DlineDefaultTool.FILE_READ,
+            getDescription: () => "[read_file]",
+            execute: async () => "Error reading file: ENOENT",
+        })
+
+        const result = await coordinator.execute(config, {
+            type: "tool_use",
+            name: DlineDefaultTool.FILE_READ,
+            params: { path: "missing.ts" },
+            partial: false,
+            ts: CARD_TS,
+        } as ToolUse)
+
+        expect(result).toBe("Error reading file: ENOENT")
+        expect(removeMessagesByTs).toHaveBeenCalledWith([CARD_TS])
+        expect(postStateToWebview).toHaveBeenCalledOnce()
+    })
+
+    it("withdraws an unsettled partial preview card when a handler throws", async () => {
+        const { config, removeMessagesByTs, postStateToWebview } = harness([card(true)])
+        const coordinator = new ToolExecutorCoordinator()
+        coordinator.register({
+            name: DlineDefaultTool.FILE_READ,
+            getDescription: () => "[read_file]",
+            execute: async () => {
+                throw new Error("boom")
+            },
+        })
+
+        await expect(
+            coordinator.execute(config, {
+                type: "tool_use",
+                name: DlineDefaultTool.FILE_READ,
+                params: { path: "missing.ts" },
+                partial: false,
+                ts: CARD_TS,
+            } as ToolUse),
+        ).rejects.toThrow("boom")
+
+        expect(removeMessagesByTs).toHaveBeenCalledWith([CARD_TS])
+        expect(postStateToWebview).toHaveBeenCalledOnce()
+    })
+
+    it("keeps a card the handler finalized during execution", async () => {
+        const rows = [card(true)]
+        const { config, removeMessagesByTs, postStateToWebview } = harness(rows)
+        const coordinator = new ToolExecutorCoordinator()
+        coordinator.register({
+            name: DlineDefaultTool.FILE_READ,
+            getDescription: () => "[read_file]",
+            execute: async () => {
+                rows[0] = card(false)
+                return "ok"
+            },
+        })
+
+        await coordinator.execute(config, {
+            type: "tool_use",
+            name: DlineDefaultTool.FILE_READ,
+            params: { path: "present.ts" },
+            partial: false,
+            ts: CARD_TS,
+        } as ToolUse)
+
+        expect(removeMessagesByTs).not.toHaveBeenCalled()
+        expect(postStateToWebview).not.toHaveBeenCalled()
     })
 })

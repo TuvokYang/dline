@@ -56,6 +56,41 @@ describe("retryTaskActivities", () => {
         expect(restoreSubagentActivityRetry).toHaveBeenCalledWith("subagent-reopened")
     })
 
+    it("loads an older activity on demand via ensureLoaded when it sits outside the hydrated window", async () => {
+        let loadedOlder = false
+        let liveRetryControl = false
+        const hydrate = vi.fn(async () => undefined)
+        const ensureLoaded = vi.fn(async (activityId: string) => {
+            if (activityId === "subagent-older") loadedOlder = true
+            return undefined
+        })
+        const restoreSubagentActivityRetry = vi.fn(async () => {
+            liveRetryControl = true
+            return true
+        })
+        const retry = vi.fn(async (activityIds: string[]) => (liveRetryControl ? activityIds : []))
+        const session = createSessionFixture({
+            taskId: "task-1",
+            taskInstanceId: "open-1",
+            owners: {
+                activities: {
+                    hydrate,
+                    ensureLoaded,
+                    hasLiveRetryControl: vi.fn(() => liveRetryControl),
+                    isRetryable: vi.fn(() => loadedOlder),
+                    retry,
+                },
+                toolExecution: { restoreSubagentActivityRetry },
+            },
+        })
+
+        const response = await retryTaskActivities(controllerWith({ task: session }) as never, request(["subagent-older"]))
+
+        expect(response.retriedActivityIds).toEqual(["subagent-older"])
+        expect(ensureLoaded).toHaveBeenCalledWith("subagent-older")
+        expect(restoreSubagentActivityRetry).toHaveBeenCalledWith("subagent-older")
+    })
+
     it("does not retry when a same-ID replacement opens while activities load", async () => {
         let release!: () => void
         const retry = vi.fn(async (activityIds: string[]) => activityIds)

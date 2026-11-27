@@ -51,8 +51,8 @@ export class FindReferencesHandler implements IFullyManagedTool {
         const line = Number(p?.line || 0)
         const character = Number(p?.character || 0)
         const displayPath = getReadablePath(config.cwd, rawPath)
-        const errMsg = (msg: string) => {
-            config.callbacks
+        const errMsg = async (msg: string) => {
+            await config.callbacks
                 .say(
                     "tool",
                     JSON.stringify({
@@ -69,7 +69,7 @@ export class FindReferencesHandler implements IFullyManagedTool {
                 .catch(() => {})
             return msg
         }
-        if (!rawPath || !line || !character) return errMsg("Error: missing required parameters.")
+        if (!rawPath || !line || !character) return await errMsg("Error: missing required parameters.")
 
         // The LSP requires an absolute path; the model may pass a workspace-relative one.
         const pathResult = resolveWorkspacePath(config, rawPath, "FindReferencesHandler.execute")
@@ -78,8 +78,8 @@ export class FindReferencesHandler implements IFullyManagedTool {
         try {
             const r = await HostProvider.language.findReferences({ filePath, line, character })
             const failure = describeLanguageFailure("findReferences", r, displayPath)
-            if (failure) return errMsg(failure)
-            if (!r.references?.length) return errMsg(getPrompt("findReferences", "noReferences"))
+            if (failure) return await errMsg(failure)
+            if (!r.references?.length) return await errMsg(getPrompt("findReferences", "noReferences"))
 
             // Build structured references array
             const refs: RefEntry[] = r.references.map((ref: any) => ({
@@ -105,7 +105,7 @@ export class FindReferencesHandler implements IFullyManagedTool {
             const content = parts.join("\n\n")
 
             const uniqueFiles = new Set(r.references.map((ref: any) => ref.filePath)).size
-            config.callbacks
+            await config.callbacks
                 .say(
                     "tool",
                     JSON.stringify({
@@ -126,7 +126,7 @@ export class FindReferencesHandler implements IFullyManagedTool {
                 .catch(() => {})
             return content
         } catch (e) {
-            return errMsg(renderPrompt("findReferences", "errorPrefix", { ERROR: String(e) }))
+            return await errMsg(renderPrompt("findReferences", "errorPrefix", { ERROR: String(e) }))
         }
     }
 }

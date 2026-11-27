@@ -134,7 +134,8 @@ describe.each(["openai", "anthropic"] as const)("%s custom URL pricing", (provid
         expect(screen.queryByRole("button", { name: "Add Pricing Tier" })).toBeNull()
         fireEvent.click(screen.getByRole("checkbox", { name: "Use custom base URL" }))
         expect(screen.getByLabelText("Pricing Mode")).toBeTruthy()
-        expect(screen.getByRole("button", { name: "Add Pricing Tier" })).toBeTruthy()
+        expect(screen.getByLabelText("Input Price ($/1M tokens)")).toBeVisible()
+        expect(screen.queryByRole("button", { name: "Add Pricing Tier" })).toBeNull()
         const saved = JSON.parse(screen.getByTestId("profile").textContent ?? "null")
         expect(saved.baseUrl).toBeUndefined()
     })
@@ -226,10 +227,17 @@ describe.each(["openai", "anthropic"] as const)("%s custom URL pricing", (provid
         expect(remaining).toEqual([{ startMinute: 30, endMinute: 90, prices: { inputPrice: 1, outputPrice: 2 } }])
     })
 
-    it("makes Add tier work from flat pricing and retains a sole unbounded tail", async () => {
+    it("offers Add tier after selecting context pricing and retains a sole unbounded tail", async () => {
         render(<Host provider={provider} />)
         fireEvent.click(screen.getByRole("checkbox", { name: "Use custom base URL" }))
         fireEvent.click(screen.getByRole("button", { name: "Model Configuration" }))
+        expect(screen.queryByRole("button", { name: "Add Pricing Tier" })).toBeNull()
+        await act(async () => {
+            fireEvent.keyDown(screen.getByRole("combobox", { name: "Pricing Mode" }), { key: "Enter" })
+        })
+        await act(async () => {
+            fireEvent.click(screen.getByRole("option", { name: "By context size" }))
+        })
         await act(async () => {
             fireEvent.click(screen.getByRole("button", { name: "Add Pricing Tier" }))
         })

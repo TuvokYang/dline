@@ -8,6 +8,7 @@ import { TaskEnvironmentProjection } from "./TaskEnvironmentProjection"
 interface ProjectionOverrides {
     readonly cwd?: string
     readonly manager?: unknown
+    readonly checkpoints?: boolean
 }
 
 function projection(overrides: ProjectionOverrides = {}) {
@@ -18,6 +19,7 @@ function projection(overrides: ProjectionOverrides = {}) {
         getGlobalSettingsKey: vi.fn((key: string) => {
             if (key === "focusChainSettings") return { enabled: true, remindClineInterval: 1 }
             if (key === "showActiveTasksInEnvDetails") return false
+            if (key === "enableCheckpointsSetting") return overrides.checkpoints ?? true
             return false
         }),
     }
@@ -117,6 +119,14 @@ describe("TaskEnvironmentProjection workspace configuration", () => {
         const withoutDetails = environmentSections(await value.build(false, PromptProfile.Standard))
         expect(withoutDetails.has("Workspace Configuration")).toBe(false)
         expect(workspaceManager.buildWorkspacesJson).toHaveBeenCalledTimes(1)
+    })
+
+    it("reports checkpoint availability from the global checkpoints setting", async () => {
+        const enabled = environmentSections(await projection({ checkpoints: true }).value.build(false, PromptProfile.Standard))
+        expect(enabled.get("Workspace Recovery")).toBe("Checkpoints: enabled")
+
+        const disabled = environmentSections(await projection({ checkpoints: false }).value.build(false, PromptProfile.Standard))
+        expect(disabled.get("Workspace Recovery")).toBe("Checkpoints: disabled")
     })
 
     it("omits the section and still builds the request when the VCS probe fails", async () => {

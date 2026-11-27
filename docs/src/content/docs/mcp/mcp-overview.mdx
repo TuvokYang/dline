@@ -7,6 +7,12 @@ import { Aside } from "@astrojs/starlight/components"
 
 MCP (Model Context Protocol) lets Dline use external tools, resources, and prompts through MCP servers. A server can be a local process (STDIO) or a remote endpoint (Streamable HTTP or SSE).
 
+## Demo
+
+This recording shows Dline calling a local `release-tools` MCP server to read a project's release checklist. It opens the server's tool list, submits a task, asks for approval, and displays the returned checklist.
+
+![Dline opens the release-tools server, requests approval for read_release_checklist, and displays the release checklist returned by the local MCP server](@docs-assets/ui/docs-mcp.gif)
+
 ## Opening MCP settings
 
 Select the **MCP Servers** button in the Dline panel title bar. The view has three tabs:

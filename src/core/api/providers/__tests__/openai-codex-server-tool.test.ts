@@ -339,7 +339,16 @@ describe("OpenAiCodexHandler hosted Web Search", () => {
         expect(handler.getModel().info).to.deep.include({ id: "gpt-codex-remote" })
         expect(handler.getModel().info.capabilities?.supportsPromptCache).to.equal(true)
         expect(handler.getModel().info.capabilities?.supportsReasoning).to.equal(true)
-        expect(handler.getModel().info.capabilities?.thinking?.effortLevels).to.deep.equal(["none", "low", "medium", "high"])
+        expect(handler.getModel().info.capabilities?.thinking?.effortLevels).to.deep.equal([
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra",
+        ])
         expect(handler.getModel().info.capabilities?.thinking?.defaultEnabled).to.equal(true)
         expect(handler.getModel().info.capabilities?.thinking?.defaultEffort).to.equal(undefined)
     })

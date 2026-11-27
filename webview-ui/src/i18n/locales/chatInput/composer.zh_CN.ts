@@ -36,6 +36,7 @@ export const composerZhCN = {
     "chatInput.send.input_not_ready": "Dline 暂时无法接收输入。消息已保留；请在输入就绪后再次发送。",
     "chatInput.send.submission_rejected":
         "Dline 无法接收此消息，可能是因为某个附件已不可用。消息已保留；请移除或重新添加附件后再次发送。",
+    "chatInput.send.queue_full": "输入队列已满。消息已保留；请等待队列中的消息发送或移除一条后再添加。",
     "chatInput.action.send": "发送消息",
     "chatInput.action.resume": "恢复任务",
     "chatInput.action.queue": "消息入队",

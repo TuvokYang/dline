@@ -357,7 +357,7 @@ export const CheckmarkControl = ({
                                     document.body,
                                 )}
                         </div>
-                        <DottedLine $isCheckedOut={isCheckpointCheckedOut} $small />
+                        <DottedLine $isCheckedOut={isCheckpointCheckedOut} $trailing data-testid="checkpoint-trailing-line" />
                     </ButtonGroup>
                 </div>
             )}
@@ -410,9 +410,10 @@ const Container = styled.div<{ $isMenuOpen?: boolean; $isCheckedOut?: boolean }>
 	}
 `
 
-const DottedLine = styled.div<{ $small?: boolean; $isCheckedOut?: boolean }>`
-	flex: ${(props) => (props.$small ? "0 0 5px" : "1")};
-	min-width: ${(props) => (props.$small ? "5px" : "5px")};
+const DottedLine = styled.div<{ $small?: boolean; $trailing?: boolean; $isCheckedOut?: boolean }>`
+	flex: ${(props) => (props.$trailing || props.$small ? "0 0 auto" : "1")};
+	width: ${(props) => (props.$trailing ? "calc(5px + var(--chat-trajectory-clearance, 0px))" : props.$small ? "5px" : "auto")};
+	min-width: ${(props) => (props.$trailing ? "calc(5px + var(--chat-trajectory-clearance, 0px))" : "5px")};
 	height: 1px;
 	background-image: linear-gradient(
 		to right,
@@ -428,7 +429,6 @@ const ButtonGroup = styled.div`
 	align-items: center;
 	gap: 4px;
 	flex-shrink: 0;
-	padding-inline-end: var(--chat-trajectory-clearance, 0px);
 `
 
 const CustomButton = styled.button<{ disabled?: boolean; $isActive?: boolean; $isCheckedOut?: boolean }>`

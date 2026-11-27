@@ -506,7 +506,7 @@ export class ContextCompactionSession {
                                         kind: "pass_receiving",
                                         passIdentity,
                                         attempt,
-                                        chunk: cloneDeep(chunk),
+                                        chunk: cloneStreamChunk(chunk),
                                     })
                                 },
                                 onSummaryUpdate: async (content, attempt) => {
@@ -812,7 +812,7 @@ export class ContextCompactionSession {
                         kind: "summary_refit_receiving",
                         passIdentity,
                         attempt,
-                        chunk: cloneDeep(chunk),
+                        chunk: cloneStreamChunk(chunk),
                     })
                 },
                 onSummaryUpdate: async (content, attempt) => {
@@ -890,6 +890,15 @@ export class ContextCompactionSession {
 
 function snapshotFittingState(state: TargetWindowFittingState): TargetWindowFittingState {
     return { ...state }
+}
+
+function cloneStreamChunk(chunk: unknown): unknown {
+    if (!chunk || typeof chunk !== "object") return chunk
+    const record = chunk as Record<string, unknown>
+    for (const value of Object.values(record)) {
+        if (value !== null && typeof value === "object") return cloneDeep(chunk)
+    }
+    return { ...record }
 }
 
 function hasUncoveredTurn(state: TargetWindowFittingState): boolean {

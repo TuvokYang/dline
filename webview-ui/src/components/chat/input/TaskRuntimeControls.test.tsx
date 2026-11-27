@@ -180,6 +180,30 @@ describe("chat input TaskRuntimeControls", () => {
         expect(mocks.updateTaskSettings).toHaveBeenCalledTimes(1)
     })
 
+    it("offers complete compatibility choices for an unknown model and submits a raw Task effort", async () => {
+        const user = userEvent.setup()
+        mocks.profiles[0].modelInfo.id = "stale-model"
+        render(<TaskRuntimeControls />)
+        await user.click(screen.getByRole("combobox", { name: "Task thinking override" }))
+        expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+            "None",
+            "Minimal",
+            "Low",
+            "Medium",
+            "High",
+            "Xhigh",
+            "Max",
+            "Ultra",
+        ])
+        await user.click(screen.getByRole("option", { name: "Max", exact: true }))
+        await waitFor(() =>
+            expect(mocks.updateTaskSettings).toHaveBeenCalledWith("task-1", {
+                actModeReasoningOverrideKind: "effort",
+                actModeReasoningOverrideEffort: "max",
+            }),
+        )
+    })
+
     it.each([
         { name: "undeclared effort", mode: "effort", override: { kind: "effort", effort: "stale-level" } },
         { name: "budget on an effort model", mode: "effort", override: { kind: "budget", budgetTokens: 23 } },

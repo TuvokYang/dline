@@ -1,3 +1,4 @@
+import { existsSync, readdirSync } from "node:fs"
 import { readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { expectComposerText } from "@e2e/utils/composer"
@@ -12,6 +13,16 @@ import { STEP_SETTLE_MS, WINDOW_RECORDING } from "./utils/recording-presets"
  * The notebook opens in VS Code's built-in ipynb editor, which provides the
  * `jupyter-notebook` notebook type that gates Dline's notebook toolbar and cell actions.
  */
+
+// Dependencies are installed explicitly into an isolated directory, never into the developer's VS Code.
+const extensionDir = process.env.DLINE_DEMO_EXTENSION_DIR
+if (extensionDir) {
+    demo.use({
+        supportExtensions: readdirSync(extensionDir, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory() && existsSync(path.join(extensionDir, entry.name, "package.json")))
+            .map((entry) => path.join(extensionDir, entry.name)),
+    })
+}
 
 const NOTEBOOK_FILE = "sales-report.ipynb"
 const GENERATE_PROMPT = "Add a cell that totals the sales amount per region."

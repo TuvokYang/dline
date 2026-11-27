@@ -12,6 +12,11 @@ export const WHATS_NEW_SOURCE = resolve(__dirname, "../docs/whats-new/WHATS_NEW_
 export const WHATS_NEW_CHINESE_SOURCE = resolve(__dirname, "../docs/whats-new/WHATS_NEW.md")
 
 const RELEASE_HEADING = /^##\s+(\d+\.\d+\.\d+)\s*$/
+/** Development section used before a version is frozen, mirroring the changelog. */
+export const UNRELEASED_SECTION = "Unreleased"
+const UNRELEASED_HEADING = /^##\s+Unreleased\s*$/
+/** Packaging entries set this to the version they write into the temporary manifest. */
+const PACKAGING_VERSION_ENV = "DLINE_PACKAGING_VERSION"
 const LEVEL_TWO_HEADING = /^##\s/
 const SECTION_HEADING = /^#{1,2}\s/
 const LIST_ITEM = /^-\s+(\S.*)$/
@@ -32,9 +37,9 @@ interface PendingItem {
  * Parse the newest release section of a What's New document.
  *
  * Only the first `##` section is read, and its heading must be a bare
- * `X.Y.Z` version; text before it and older sections are documentation for
- * readers of the file. The section must be one flat `- ` list whose items use
- * only bold, inline code, and https links.
+ * `X.Y.Z` version or `Unreleased`; text before it and older sections are
+ * documentation for readers of the file. The section must be one flat `- `
+ * list whose items use only bold, inline code, and https links.
  *
  * @param markdown Document source.
  * @param source Path used in error messages.
@@ -47,10 +52,12 @@ export function parseWhatsNew(markdown: string, source: string): WhatsNewRelease
     if (headingIndex === -1) {
         throw new Error(`${source}: no release heading such as "## 1.2.3" was found.`)
     }
-    const version = RELEASE_HEADING.exec(lines[headingIndex])?.[1]
+    const version = UNRELEASED_HEADING.test(lines[headingIndex])
+        ? UNRELEASED_SECTION
+        : RELEASE_HEADING.exec(lines[headingIndex])?.[1]
     if (version === undefined) {
         throw new Error(
-            `${source}:${headingIndex + 1}: the first "##" heading must be a bare release version such as "## 1.2.3", got "${lines[headingIndex].trim()}".`,
+            `${source}:${headingIndex + 1}: the first "##" heading must be a bare release version such as "## 1.2.3" or "## Unreleased", got "${lines[headingIndex].trim()}".`,
         )
     }
     const items = readListItems(lines, headingIndex + 1, source)
@@ -80,6 +87,23 @@ export function parseWhatsNewEditions(
     return { en, "zh-CN": zhCN }
 }
 
+/**
+ * Present the Unreleased section under the version a packaging entry declares.
+ *
+ * A plain development build keeps `Unreleased`. `vsix:dev` and the packaged
+ * channels write their version into the temporary manifest before building, so
+ * the dialog names the build it actually ships in.
+ *
+ * @param release Parsed release.
+ * @param packagedVersion Version declared by the packaging manifest.
+ * @returns The release, carrying the packaged version when it was unreleased.
+ */
+export function applyPackagingVersion(release: WhatsNewRelease, packagedVersion: string | undefined): WhatsNewRelease {
+    const version = packagedVersion?.trim()
+    if (!version || release.version !== UNRELEASED_SECTION) return release
+    return { ...release, version }
+}
+
 /** Serve both parsed editions; retain the English default for existing consumers. */
 export function whatsNewPlugin(
     sourcePath: string = WHATS_NEW_SOURCE,
@@ -94,10 +118,15 @@ export function whatsNewPlugin(
             if (id !== RESOLVED_MODULE_ID) return null
             this.addWatchFile(sourcePath)
             this.addWatchFile(chineseSourcePath)
-            const releases = parseWhatsNewEditions(
+            const parsed = parseWhatsNewEditions(
                 { markdown: readFileSync(sourcePath, "utf8"), source: sourcePath },
                 { markdown: readFileSync(chineseSourcePath, "utf8"), source: chineseSourcePath },
             )
+            const packagedVersion = process.env[PACKAGING_VERSION_ENV]
+            const releases = {
+                en: applyPackagingVersion(parsed.en, packagedVersion),
+                "zh-CN": applyPackagingVersion(parsed["zh-CN"], packagedVersion),
+            }
             return `export const localizedReleases = ${JSON.stringify(releases)}; export default localizedReleases.en;`
         },
     }

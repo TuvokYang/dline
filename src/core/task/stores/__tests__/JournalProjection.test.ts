@@ -265,5 +265,33 @@ describe("JournalProjectionIndex", () => {
 
         expect(index.project()).toEqual(rebuildJournalProjection(entries))
         expect(index.project({ seq: 3 })).toEqual(rebuildJournalProjection(entries, { seq: 3 }))
+        expect(index.canRewindTo({ seq: 0 })).toBe(true)
+        expect(index.canRewindTo({ seq: 2 })).toBe(true)
+        expect(index.canRewindTo({ seq: 3 })).toBe(false)
+        expect(index.canRewindTo({ seq: 4 })).toBe(true)
+        expect(index.canRewindTo({ seq: 6 })).toBe(true)
+        expect(index.canRewindTo({ seq: 7 })).toBe(false)
+    })
+
+    it("builds lazily and filters append-only checkpoint markers without O(N*C) copying", () => {
+        const totalEntries = 15_000
+        const entries: JournalEntry[] = []
+        for (let seq = 1; seq <= totalEntries; seq++) {
+            if (seq % 5 === 0) {
+                entries.push(entry(seq, "checkpoint_marker", { payloadRef: `cp:${seq}` }))
+            } else {
+                entries.push(entry(seq, "message", { payloadRef: `msg:${seq}` }))
+            }
+        }
+
+        const startedAt = performance.now()
+        const index = new JournalProjectionIndex(entries)
+        const latest = index.project()
+        const elapsedMs = performance.now() - startedAt
+
+        expect(latest.checkpointMarkers).toHaveLength(3_000)
+        expect(latest.visibleMessages).toHaveLength(12_000)
+        expect(index.project({ seq: 25 }).checkpointMarkers.map((item) => item.watermark.seq)).toEqual([5, 10, 15, 20, 25])
+        expect(elapsedMs).toBeLessThan(1_500)
     })
 })

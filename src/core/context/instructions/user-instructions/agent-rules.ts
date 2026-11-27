@@ -5,7 +5,6 @@ import {
     RULE_SOURCE_PREFIX,
     RuleLoadResultWithInstructions,
     scanRuleToggles,
-    synchronizeRuleToggles,
 } from "@core/context/instructions/user-instructions/rule-helpers"
 import { formatResponse } from "@core/prompts/responses"
 import { ensureRulesDirectoryExists, GlobalFileNames } from "@core/storage/disk"
@@ -152,6 +151,8 @@ export async function refreshClineRulesToggles(
 ): Promise<{
     globalToggles: ClineRulesToggles
     localToggles: ClineRulesToggles
+    discoveredGlobalToggles: ClineRulesToggles
+    globalScanComplete: boolean
     discoveredLocalToggles: ClineRulesToggles
     localScanComplete: boolean
 }> {
@@ -160,8 +161,8 @@ export async function refreshClineRulesToggles(
     // reserved for explicit user toggles, so this stays off the storage write path
     // and never contends for the cross-process settings lock.
     const globalClineRulesFilePath = await ensureRulesDirectoryExists()
-    const discoveredGlobalToggles = await synchronizeRuleToggles(globalClineRulesFilePath, {})
-    const updatedGlobalToggles = resolveCapabilityToggles(controller.stateManager, "rules", discoveredGlobalToggles)
+    const globalScan = await scanRuleToggles(globalClineRulesFilePath, {})
+    const updatedGlobalToggles = resolveCapabilityToggles(controller.stateManager, "rules", globalScan.toggles)
 
     // Local toggles
     const localClineRulesFilePath = path.resolve(workingDirectory, GlobalFileNames.agentsRulesDir)
@@ -172,8 +173,10 @@ export async function refreshClineRulesToggles(
     return {
         globalToggles: updatedGlobalToggles,
         localToggles: updatedLocalToggles,
-        // The raw scan is what the state push needs: it says which rules exist,
-        // while the resolved map already folds in the user's overrides.
+        // The raw scans are what the state push needs: they say which rules exist,
+        // while the resolved maps already fold in the user's overrides.
+        discoveredGlobalToggles: globalScan.toggles,
+        globalScanComplete: globalScan.complete,
         discoveredLocalToggles: localScan.toggles,
         localScanComplete: localScan.complete,
     }

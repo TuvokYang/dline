@@ -47,8 +47,8 @@ export class RenameSymbolHandler implements IFullyManagedTool {
         const newName = String(p?.new_name || "")
         const dryRun = p?.dry_run === true || p?.dry_run === "true"
         const displayPath = getReadablePath(config.cwd, rawPath)
-        const errMsg = (msg: string) => {
-            config.callbacks
+        const errMsg = async (msg: string) => {
+            await config.callbacks
                 .say(
                     "tool",
                     JSON.stringify({
@@ -65,7 +65,7 @@ export class RenameSymbolHandler implements IFullyManagedTool {
                 .catch(() => {})
             return msg
         }
-        if (!rawPath || !line || !character || !newName) return errMsg(getPrompt("rename", "missingParams"))
+        if (!rawPath || !line || !character || !newName) return await errMsg(getPrompt("rename", "missingParams"))
 
         // The LSP requires an absolute path; the model may pass a workspace-relative one.
         const pathResult = resolveWorkspacePath(config, rawPath, "RenameSymbolHandler.execute")
@@ -74,8 +74,8 @@ export class RenameSymbolHandler implements IFullyManagedTool {
         try {
             const r = await HostProvider.language.renameSymbol({ filePath, line, character, newName, dryRun })
             const failure = describeLanguageFailure("rename", r, displayPath)
-            if (failure) return errMsg(failure)
-            if (!r.success) return errMsg(getPrompt("rename", "noEdits"))
+            if (failure) return await errMsg(failure)
+            if (!r.success) return await errMsg(getPrompt("rename", "noEdits"))
 
             // Track all modified files for per-file checkpointing (non-dry-run only)
             if (!dryRun) {
@@ -112,7 +112,7 @@ export class RenameSymbolHandler implements IFullyManagedTool {
             }
             const diff = matchEntries.map((m) => m.diff).join("\n")
             const content = buildContent(config.cwd, oldName, newName, dryRun, r.filesChanged, r.totalChanges, r.preview)
-            config.callbacks
+            await config.callbacks
                 .say(
                     "tool",
                     JSON.stringify({
@@ -135,7 +135,7 @@ export class RenameSymbolHandler implements IFullyManagedTool {
                 .catch(() => {})
             return content
         } catch (e) {
-            return errMsg(renderPrompt("rename", "errorPrefix", { ERROR: String(e) }))
+            return await errMsg(renderPrompt("rename", "errorPrefix", { ERROR: String(e) }))
         }
     }
 }

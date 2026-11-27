@@ -37,6 +37,7 @@ export const zhCN = {
     "settings.ui.modelConfiguration": "模型配置",
     "settings.ui.supportsImages": "支持图像",
     "settings.ui.hostedSearch": "使用托管网页搜索",
+    "settings.ui.tryHostedSearch": "使用托管网页搜索（未声明，可为当前模型尝试）",
     "settings.ui.noHostedSearch": "使用托管网页搜索（此模型不提供）",
     "settings.ui.hostedFetch": "使用托管网页抓取",
     "settings.ui.noHostedFetch": "使用托管网页抓取（此模型不提供）",

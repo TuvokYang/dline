@@ -104,6 +104,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         apiMetrics,
         lastApiReqTotalTokens: lastApiReqTotalTokensFromState,
         taskViewState,
+        taskLockStatus,
         currentTaskItem,
         taskTitleMessage,
         dismissHistoryTaskOpening,
@@ -642,15 +643,26 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         [clearOwnedDraft, interactionSynchronized, restoreRejectedDraft, taskViewState],
     )
     const taskInputEnabled = Boolean(taskViewState?.input.enabled && taskViewState.input.enterAction && interactionSynchronized)
-    // The queue is drained at a turn end or a tool round, and only a task that
-    // is still working reaches either. Compaction blocks compose, not intake:
-    // input submitted while it runs must enter the durable queue and is admitted
-    // after the summary lands instead of being trapped in the composer.
-    // A completion whose reply dialog is still opening reports a completed phase,
-    // yet the task still delivers what is queued as the reply; it says so itself.
-    const queueCanDeliver = taskViewState
-        ? taskViewState.input.queueable === true || taskPhaseStillDelivers(taskViewState.phase)
-        : false
+    const taskIsReadOnly = taskLockStatus?.isLocked === true
+    const activeContextTransition =
+        modeSwitch?.phase === "preflighting" ||
+        modeSwitch?.phase === "compacting" ||
+        modeSwitch?.phase === "committing" ||
+        profileSwitch?.phase === "preflighting" ||
+        profileSwitch?.phase === "compacting" ||
+        profileSwitch?.phase === "committing"
+    // The queue is drained at a turn end or a tool round, and any working task
+    // (streaming, executing tools, awaiting approval, between turns, resuming or
+    // retrying, compacting, or transitioning mode/profile) must allow input to
+    // enter the durable queue without blocking. Read-only, cancelling, and
+    // aborted surfaces never accept new queued writes.
+    const queueCanDeliver =
+        taskViewState && !taskIsReadOnly && taskViewState.phase !== "cancelling" && taskViewState.phase !== "aborted"
+            ? taskViewState.input.queueable === true ||
+              taskPhaseStillDelivers(taskViewState.phase) ||
+              contextCompactionActive ||
+              activeContextTransition
+            : false
     // The composer's action button cancels through the same task action the footer offers.
     const cancelAction = hasTaskSurface ? enabledCancelAction(taskViewState) : undefined
     const cancelTask = useMemo(
@@ -894,10 +906,10 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                     messageHandlers={messageHandlers}
                     onCancelQueuedInput={inputQueue.cancelEdit}
                     onCancelTask={cancelTask}
-                    onCommitQueuedInput={inputQueue.commitEdit}
+                    onCommitQueuedInput={inputQueue.commitEditWithOutcome}
                     onDraftAccepted={clearOwnedDraft}
                     onEditQueuedInput={inputQueue.beginEdit}
-                    onEnqueueInput={inputQueue.enqueue}
+                    onEnqueueInput={inputQueue.enqueueWithOutcome}
                     onRemoveQueuedInput={inputQueue.remove}
                     onReorderQueuedInput={inputQueue.reorder}
                     onReportBugFallback={submitLocalReportBug}

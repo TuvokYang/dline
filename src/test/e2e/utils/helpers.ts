@@ -759,6 +759,7 @@ export const e2e = test
                 windowSize?: { width: number; height: number }
                 forceDeviceScaleFactor?: number
                 locale?: string
+                extensionPaths?: readonly string[]
             },
         ) => Promise<ElectronApplication>
     }>({
@@ -889,6 +890,7 @@ export const e2e = test
                         "--skip-release-notes",
                         // User data comes from VSCODE_PORTABLE, which outranks --user-data-dir.
                         ...extensionLaunchArguments,
+                        ...(launchOptions.extensionPaths ?? []).map((directory) => `--extensionDevelopmentPath=${directory}`),
                         workspacePath,
                     ],
                 })

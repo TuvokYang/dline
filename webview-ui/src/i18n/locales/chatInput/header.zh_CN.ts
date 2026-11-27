@@ -4,6 +4,10 @@ import type { headerEn } from "./header.en"
 export const headerZhCN = {
     "chatInput.header.collapse": "收起任务头部",
     "chatInput.header.expand": "展开任务头部",
+    "chatInput.header.details": "任务详情",
+    "chatInput.header.taskId": "任务 ID",
+    "chatInput.header.fullText": "完整任务文本",
+    "chatInput.header.idUnavailable": "暂不可用",
     "chatInput.header.spawned": "派生任务：",
     "chatInput.header.openTask": ({ taskId }) => `打开任务：${taskId}`,
     "chatInput.header.scrollMessage": ({ message }) => `滚动到你的消息：${message}`,

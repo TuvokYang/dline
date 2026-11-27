@@ -125,7 +125,7 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory, Provi
     async restoreNewTaskApproval(state: Readonly<TaskState>, payloads: TaskPayloadStore): Promise<void> {
         const turnId = state.turn.turnId
         if (turnId === undefined || this.options.authority.read(turnId) !== undefined) return
-        const restored = await locateRestoredNewTaskApproval(state, await this.options.conversation.entries(), payloads)
+        const restored = await locateRestoredNewTaskApproval(state, () => this.options.conversation.entries(), payloads)
         if (!restored) return
         const [messages, entries] = await Promise.all([
             this.options.conversation.providerMessages(restored.through),

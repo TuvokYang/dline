@@ -255,6 +255,42 @@ describe("projectCanonicalTaskView", () => {
         })
     })
 
+    it("keeps input queueable while compaction runs on a completed or errored flow", () => {
+        const base = state()
+        for (const phase of ["completed", "error"] as const) {
+            const view = projectCanonicalTaskView(
+                state({
+                    flow: {
+                        ...base.flow,
+                        phase,
+                        compaction: {
+                            compactionId: "compact-1",
+                            attempt: "attempt-1",
+                            contextRef: "context-1",
+                            status: "running",
+                        },
+                    },
+                }),
+            )
+            expect(view.input).toEqual({ mode: "queued" })
+        }
+    })
+
+    it("keeps input queueable while an error_retry dialog is resolving", () => {
+        const base = state()
+        const view = projectCanonicalTaskView(
+            state({
+                flow: { ...base.flow, phase: "error", error: "provider failed" },
+                dialog: {
+                    approvalsByBlock: {},
+                    primary: dialog({ kind: "error_retry", status: "resolving" }),
+                },
+            }),
+        )
+
+        expect(view.input).toEqual({ mode: "queued" })
+    })
+
     it("fails closed when an awaiting dialog lacks its receiver generation", () => {
         const primary = dialog({ receiverGeneration: undefined })
         const view = projectCanonicalTaskView(state({ dialog: { primary, approvalsByBlock: {} } }))

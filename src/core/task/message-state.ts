@@ -108,6 +108,47 @@ function mayReplaceRow(current: UiMessage, next: UiMessage): boolean {
     return current.partial === true || next.partial !== true
 }
 
+/**
+ * Merge a timestamp-ordered durable history with a small set of transient overlays in O(N + K log K).
+ *
+ * The common streaming case places 1–3 transient rows strictly after the durable tail, avoiding both a
+ * full-history Map allocation and an O(N log N) sort over tens of thousands of rows.
+ */
+function mergeOrderedDurableWithTransients(
+    orderedDurable: readonly UiMessage[],
+    transients: ReadonlyMap<number, UiMessage>,
+): UiMessage[] {
+    const sortedTransients = [...transients.values()].sort((left, right) => left.ts - right.ts)
+    const lastDurable = orderedDurable[orderedDurable.length - 1]
+    if (!lastDurable || sortedTransients[0].ts > lastDurable.ts) {
+        return [...orderedDurable, ...sortedTransients]
+    }
+    const merged: UiMessage[] = []
+    let durableIndex = 0
+    let transientIndex = 0
+    while (durableIndex < orderedDurable.length && transientIndex < sortedTransients.length) {
+        const durableRow = orderedDurable[durableIndex]
+        const transientRow = sortedTransients[transientIndex]
+        if (durableRow.ts < transientRow.ts) {
+            merged.push(durableRow)
+            durableIndex++
+        } else if (transientRow.ts < durableRow.ts) {
+            merged.push(transientRow)
+            transientIndex++
+        } else {
+            // Transient overlay wins over any durable row(s) with the same timestamp.
+            merged.push(transientRow)
+            transientIndex++
+            while (durableIndex < orderedDurable.length && orderedDurable[durableIndex].ts === transientRow.ts) {
+                durableIndex++
+            }
+        }
+    }
+    while (durableIndex < orderedDurable.length) merged.push(orderedDurable[durableIndex++])
+    while (transientIndex < sortedTransients.length) merged.push(sortedTransients[transientIndex++])
+    return merged
+}
+
 export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents> {
     private taskIsFavorited: boolean
     private checkpointTracker: CheckpointTracker | undefined
@@ -166,10 +207,25 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
     /** ClineMessages as a property getter — merges durable rows with transient presentation overlays by timestamp. */
     get clineMessages(): UiMessage[] {
         const durable = this.uiMessage ? (this.uiMessage.getAll() as unknown as UiMessage[]) : []
-        if (this.transientClineMessages.size === 0) return orderMessagesByTs(durable)
-        const merged = new Map(durable.map((message) => [message.ts, message]))
-        for (const [ts, message] of this.transientClineMessages) merged.set(ts, message)
-        return [...merged.values()].sort((left, right) => left.ts - right.ts)
+        const orderedDurable = orderMessagesByTs(durable)
+        if (this.transientClineMessages.size === 0) return orderedDurable
+        return mergeOrderedDurableWithTransients(orderedDurable, this.transientClineMessages)
+    }
+
+    /** Whether a row with this timestamp exists in either the transient overlay or the durable store. */
+    hasClineMessage(ts: number): boolean {
+        return this.transientClineMessages.has(ts) || this.findDurableByTs(ts) !== undefined
+    }
+
+    /** Look up one durable row by timestamp, falling back gracefully for partial test doubles. */
+    private findDurableByTs(ts: number): UiMessage | undefined {
+        if (!this.uiMessage) return undefined
+        if (typeof this.uiMessage.getByTs === "function") return this.uiMessage.getByTs(ts)
+        const durable = this.uiMessage.getAll() as unknown as UiMessage[]
+        for (let index = durable.length - 1; index >= 0; index--) {
+            if (durable[index].ts === ts) return durable[index]
+        }
+        return undefined
     }
 
     /** Read-only metadata over the actual presentation sequence, or a selected outgoing page of it. */
@@ -189,7 +245,10 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 
     /** A single outgoing partial row uses the same committed mapping as a message page. */
     async projectMessageSourceIndex(ts: number): Promise<number | undefined> {
-        return await this.uiMessage?.sourceIndexOfTimestamp(ts)
+        if (!this.uiMessage) return undefined
+        // A purely transient row has no committed ordinal in messages.db; skip the SQLite lookup on streaming updates.
+        if (this.transientClineMessages.has(ts) && this.findDurableByTs(ts) === undefined) return undefined
+        return await this.uiMessage.sourceIndexOfTimestamp(ts)
     }
 
     /**
@@ -781,12 +840,15 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 
     /** Upsert a transient presentation row without marking the durable UI store dirty. */
     upsertTransientClineMessage(message: UiMessage): UiMessage {
-        const previousMessages = this.clineMessages
-        const previousIndex = previousMessages.findIndex((candidate) => candidate.ts === message.ts)
-        const previousMessage = previousIndex >= 0 ? previousMessages[previousIndex] : undefined
+        if (this.listenerCount("clineMessagesChanged") === 0) {
+            this.transientClineMessages.set(message.ts, message)
+            this.bumpMessageRevision()
+            return message
+        }
+        const previousMessage = this.transientClineMessages.get(message.ts) ?? this.findDurableByTs(message.ts)
         this.transientClineMessages.set(message.ts, message)
         const messages = this.clineMessages
-        const index = messages.findIndex((candidate) => candidate.ts === message.ts)
+        const index = findLastIndex(messages, (candidate) => candidate.ts === message.ts)
         this.emitClineMessagesChanged({
             type: previousMessage ? "update" : "add",
             messages,
@@ -832,7 +894,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 
     /** A row that is already shown keeps the conversation place it was first shown at. */
     private placeShownRow(message: UiMessage): UiMessage {
-        const existing = this.clineMessages.find((candidate) => candidate.ts === message.ts)
+        const existing = this.transientClineMessages.get(message.ts) ?? this.findDurableByTs(message.ts)
         return {
             ...existing,
             ...message,
@@ -915,14 +977,20 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 
     /** Remove a transient presentation row without touching durable UI history. */
     removeTransientClineMessage(ts: number): boolean {
-        const previousMessages = this.clineMessages
         const previousMessage = this.transientClineMessages.get(ts)
         if (!previousMessage) return false
+        if (this.listenerCount("clineMessagesChanged") === 0) {
+            this.transientClineMessages.delete(ts)
+            this.bumpMessageRevision()
+            this.messageWindowRevision++
+            return true
+        }
+        const previousMessages = this.clineMessages
         this.transientClineMessages.delete(ts)
         this.emitClineMessagesChanged({
             type: "delete",
             messages: this.clineMessages,
-            index: previousMessages.findIndex((message) => message.ts === ts),
+            index: findLastIndex(previousMessages, (message) => message.ts === ts),
             previousMessage,
         })
         return true

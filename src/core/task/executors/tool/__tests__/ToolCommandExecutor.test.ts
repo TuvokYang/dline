@@ -37,8 +37,9 @@ function harness(limit = 32) {
     const events: TaskEvent[] = []
     const scheduler = new TurnToolScheduler({ readConfiguredLimit: () => limit })
     const operationCancellation = { cancel: vi.fn(), reset: vi.fn() }
+    const withdrawUnsettled = vi.fn(async (_invocationRef: string) => undefined)
     const executor = new ToolCommandExecutor(
-        { runner, surface: createDeniedSurface("detached_domain"), scheduler, operationCancellation },
+        { runner, surface: createDeniedSurface("detached_domain"), scheduler, operationCancellation, withdrawUnsettled },
         {
             submit: async (event) => {
                 events.push(event)
@@ -46,7 +47,7 @@ function harness(limit = 32) {
             },
         },
     )
-    return { executor, runner, settlers, events, scheduler, operationCancellation }
+    return { executor, runner, settlers, events, scheduler, operationCancellation, withdrawUnsettled }
 }
 
 function startedBlocks(events: TaskEvent[]): string[] {
@@ -250,5 +251,21 @@ describe("ToolCommandExecutor", () => {
         expect(runner.runBlock).toHaveBeenCalledTimes(1)
         expect(startedBlocks(events)).toEqual(["b1"])
         expect(cancelledBlocks(events)).toEqual(expect.arrayContaining(["b1", "b2"]))
+    })
+
+    it("withdraws unsettled preview cards for blocks cancelled before starting", async () => {
+        const { executor, runner, settlers, withdrawUnsettled } = harness(1)
+        const completion = executor.execute(command())
+        await vi.waitFor(() => expect(runner.runBlock).toHaveBeenCalledTimes(1))
+
+        const order = { haltId: "halt-withdraw", generation: 0, reason: "cancel" as const }
+        executor.fence(order)
+        const stopping = executor.stop(order)
+        settlers.get("b1")?.resolve()
+        await stopping
+        await executor.drain(order)
+        await completion
+
+        expect(withdrawUnsettled).toHaveBeenCalledWith("invocation:b2")
     })
 })

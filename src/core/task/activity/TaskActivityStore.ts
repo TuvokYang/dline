@@ -94,6 +94,8 @@ type MoveActivity = () => Promise<BackgroundHandoffResult>
 
 export interface TaskActivityPersistencePort {
     load(): Promise<TaskActivityRecord[]>
+    /** Optional targeted lookup for an activity outside the recent hydration window. */
+    loadById?(activityId: string): Promise<TaskActivityRecord | undefined>
     /** Writes the activities that changed; activities not passed keep their stored state. */
     upsert(activities: readonly TaskActivityRecord[]): Promise<void>
 }
@@ -142,9 +144,32 @@ export class TaskActivityStore {
     ) {}
 
     async hydrate(): Promise<void> {
-        if (!this.persistence) return
+        if (!this.persistence || this.disposed) return
         this.hydratePromise ??= this.loadPersistedActivities()
         await this.hydratePromise
+    }
+
+    /**
+     * Ensure one persisted activity is loaded into memory, falling back to a primary-key
+     * lookup when the record sits older than the bounded recent hydration window.
+     */
+    async ensureLoaded(activityId: string): Promise<TaskActivityRecord | undefined> {
+        if (this.disposed) return undefined
+        const existing = this.activities.get(activityId)
+        if (existing) return this.clone(existing)
+        await this.hydrate()
+        if (this.disposed) return undefined
+        const hydrated = this.activities.get(activityId)
+        if (hydrated) return this.clone(hydrated)
+        const loaded = await this.persistence?.loadById?.(activityId)
+        if (!loaded || this.disposed) return undefined
+        const sanitized = this.sanitizePersisted(loaded)
+        const stored = this.activities.get(sanitized.activityId) ?? sanitized
+        if (!this.activities.has(sanitized.activityId)) {
+            this.activities.set(sanitized.activityId, stored)
+        }
+        for (const event of sanitized.events) this.sequence = Math.max(this.sequence, event.sequence)
+        return this.clone(stored)
     }
 
     /**
@@ -198,7 +223,7 @@ export class TaskActivityStore {
         for (const activity of persistedActivities) {
             this.persistedRecoveryCandidateIds.add(activity.activityId)
             if (!this.activities.has(activity.activityId)) {
-                this.activities.set(activity.activityId, this.clone(activity))
+                this.activities.set(activity.activityId, this.sanitizePersisted(activity))
             }
             for (const event of activity.events) this.sequence = Math.max(this.sequence, event.sequence)
         }
@@ -270,7 +295,7 @@ export class TaskActivityStore {
         if (!activity || activity.kind !== "subagent") return
         this.retriers.delete(activityId)
         if (activity.retryRecipe) activity.retryRecipe = { ...activity.retryRecipe, retryable: false }
-        activity.retryUnavailableReason = redactSensitiveText(reason)
+        activity.retryUnavailableReason = boundFieldText(reason)
         activity.updatedAt = Date.now()
         this.markDirty(activityId, true)
     }
@@ -550,7 +575,7 @@ export class TaskActivityStore {
         this.listeners.set(listener, Promise.resolve())
         if (onComplete) this.completionListeners.set(listener, onComplete)
         void this.hydrate().then(() => {
-            if (this.listeners.has(listener)) {
+            if (!this.disposed && this.listeners.has(listener)) {
                 this.enqueue(listener, { sequence: ++this.sequence, snapshot: true, activities: this.list() })
             }
         })
@@ -679,6 +704,12 @@ export class TaskActivityStore {
         this.finishers.clear()
         this.retriers.clear()
         this.backgroundMovers.clear()
+        this.backgroundGroups.clear()
+        this.dirtyIds.clear()
+        this.persistedRecoveryCandidateIds.clear()
+        // Release hydrated activity payloads immediately so a promoted or closed
+        // surface does not retain a duplicate copy alongside the active runtime.
+        this.activities.clear()
     }
 
     /**
@@ -750,25 +781,47 @@ export class TaskActivityStore {
         } as TaskActivityEvent)
     }
 
+    /**
+     * Redact and bound a persisted activity once at ingress so older stored files
+     * cannot bypass field ceilings, while subsequent reads stay pure structural copies.
+     */
+    private sanitizePersisted(activity: TaskActivityRecord): TaskActivityRecord {
+        const safeOutput = activity.output === undefined ? undefined : redactSensitiveText(activity.output)
+        const boundedOutput =
+            safeOutput !== undefined && safeOutput.length > MAX_OUTPUT_CHARS ? safeOutput.slice(-MAX_OUTPUT_CHARS) : safeOutput
+        const sanitized: TaskActivityRecord = {
+            ...activity,
+            title: boundFieldText(activity.title),
+            detail: activity.detail === undefined ? undefined : boundFieldText(activity.detail),
+            latestEvent: activity.latestEvent === undefined ? undefined : boundFieldText(activity.latestEvent),
+            output: boundedOutput,
+            result: activity.result === undefined ? undefined : boundFieldText(activity.result),
+            error: activity.error === undefined ? undefined : boundFieldText(activity.error),
+            runtime: activity.runtime ? { ...activity.runtime } : undefined,
+            metrics: activity.metrics ? { ...activity.metrics } : undefined,
+            retryRecipe: activity.retryRecipe ? boundRetryRecipe(activity.retryRecipe) : undefined,
+            retryUnavailableReason:
+                activity.retryUnavailableReason === undefined ? undefined : boundFieldText(activity.retryUnavailableReason),
+            events: activity.events.map((event) => this.redactEvent({ ...event })),
+        }
+        this.trimEvents(sanitized)
+        return sanitized
+    }
+
+    /**
+     * Defensive copy of an already-sanitized record.
+     *
+     * Every ingress path (create, update, appendOutput, appendEvent, load) already
+     * redacts and bounds text fields, so cloning on read or publish avoids repeating
+     * global regex scans over the whole event history.
+     */
     private clone(activity: TaskActivityRecord): TaskActivityRecord {
         return {
             ...activity,
-            title: redactSensitiveText(activity.title),
-            detail: activity.detail === undefined ? undefined : redactSensitiveText(activity.detail),
-            latestEvent: activity.latestEvent === undefined ? undefined : redactSensitiveText(activity.latestEvent),
-            output: activity.output === undefined ? undefined : redactSensitiveText(activity.output),
-            result: activity.result === undefined ? undefined : redactSensitiveText(activity.result),
-            error: activity.error === undefined ? undefined : redactSensitiveText(activity.error),
             runtime: activity.runtime ? { ...activity.runtime } : undefined,
             metrics: activity.metrics ? { ...activity.metrics } : undefined,
-            // A recipe reaching this point may come from an activity file
-            // written by an older build, so it is bounded here as well as on
-            // the create path; otherwise loading such a file would reintroduce
-            // the raw prompt the ceiling exists to prevent.
-            retryRecipe: activity.retryRecipe ? boundRetryRecipe(activity.retryRecipe) : undefined,
-            retryUnavailableReason:
-                activity.retryUnavailableReason === undefined ? undefined : redactSensitiveText(activity.retryUnavailableReason),
-            events: activity.events.map((event) => this.redactEvent({ ...event })),
+            retryRecipe: activity.retryRecipe ? { ...activity.retryRecipe } : undefined,
+            events: activity.events.map((event) => ({ ...event })),
         }
     }
 

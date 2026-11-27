@@ -1,3 +1,6 @@
+import { QUEUE_COMMAND_PERFORMED } from "@core/task/session/CanonicalInputQueueApplication"
+import { SemanticInputRejectedError } from "@core/task/session/TaskInputAdmission"
+import { semanticInputDiagnostic } from "@shared/input-semantics/diagnostics"
 import { MutateInputQueueRequest } from "@shared/proto/dline/task"
 import { describe, expect, it, vi } from "vitest"
 import { mutateInputQueue } from "../mutateInputQueue"
@@ -63,7 +66,9 @@ describe("mutateInputQueue", () => {
 
     // The Webview holds no local queue copy, so without this publication an
     // accepted entry stays invisible until an unrelated state change happens.
-    it("publishes immediately after an accepted discrete change", async () => {
+    // Discrete queue mutations use the lightweight input-queue fast patch so
+    // streaming/compaction task-view patches cannot starve them.
+    it("publishes immediately through the input-queue fast patch after an accepted discrete change", async () => {
         const task = liveTask("task-1")
         const controller = {
             task,
@@ -73,7 +78,53 @@ describe("mutateInputQueue", () => {
 
         await mutateInputQueue(controller as never, removal)
 
+        expect(controller.postStateToWebview).toHaveBeenCalledWith({ immediate: true, projection: "input-queue" })
+    })
+
+    it("publishes immediate full state when an enqueue runs a bare lifecycle command", async () => {
+        const task = liveTask("task-1")
+        task.inputQueue.mutate = vi.fn(async () => ({ accepted: true, result: QUEUE_COMMAND_PERFORMED }))
+        const controller = {
+            task,
+            promoteHistoryDisplayForActivityControl: vi.fn(async () => true),
+            postStateToWebview: vi.fn(async () => undefined),
+        }
+
+        const response = await mutateInputQueue(
+            controller as never,
+            MutateInputQueueRequest.create({
+                taskId: "task-1",
+                enqueue: { draft: { text: "/cmd:compact", images: [], files: [] }, steering: false },
+            }),
+        )
+
+        expect(response).toMatchObject({ accepted: true, result: QUEUE_COMMAND_PERFORMED })
         expect(controller.postStateToWebview).toHaveBeenCalledWith({ immediate: true })
+    })
+
+    it("maps SemanticInputRejectedError from queue mutation to invalid_payload without throwing", async () => {
+        const task = liveTask("task-1")
+        task.inputQueue.mutate = vi.fn(async () => {
+            throw new SemanticInputRejectedError([
+                semanticInputDiagnostic("semantic_input_catalog_stale", "catalog moved on", { documentId: "doc-1" }),
+            ])
+        })
+        const controller = {
+            task,
+            promoteHistoryDisplayForActivityControl: vi.fn(async () => true),
+            postStateToWebview: vi.fn(async () => undefined),
+        }
+
+        const response = await mutateInputQueue(
+            controller as never,
+            MutateInputQueueRequest.create({
+                taskId: "task-1",
+                enqueue: { draft: { text: "queued", images: [], files: [] }, steering: true },
+            }),
+        )
+
+        expect(response).toMatchObject({ accepted: false, result: "invalid_payload" })
+        expect(controller.postStateToWebview).not.toHaveBeenCalled()
     })
 
     // A drag emits many reorders; each immediate publication costs a full state

@@ -7,13 +7,22 @@ The What's New dialog in the Dline sidebar shows the newest release section in E
 <!--
 Format rules, enforced by webview-ui/vite-whats-new.ts at build time:
 - Each release starts with a bare "## X.Y.Z" heading, newest first. The first "##" heading is the
-  release that ships, so do not put any other "##" heading above it.
+  release that ships, so do not put any other "##" heading above it. During development it may be
+  "## Unreleased"; dev and insiders builds show it, and freezing the version renames it to
+  "## X.Y.Z" matching package.json.
 - A release holds one flat "- " list. Indent a continuation line by at least two spaces.
 - Inline syntax is limited to **bold**, `code`, and [text](https://...) links, without nesting.
-- Every version bump adds a section here. The newest release must equal the version in
-  package.json, and WHATS_NEW.md must carry the same version with the same number of items.
-  Unit tests enforce both.
+- Every version bump adds a section here. WHATS_NEW.md must carry the same version with the same
+  number of items. Unit tests enforce both.
 -->
+
+## 0.14.4
+
+- **GLM text tool calls**: Z.ai GLM models execute tool calls written as markup instead of printing them.
+- **Queue input while busy**: Keep queueing and steering inputs across work, compaction, and mode switches.
+- **Long-task stability**: Fix long-task resume timeouts, OOM crashes, token undercounting, and rate-history stalls.
+- **Task header hover**: Hover the task header to inspect the full task text and Task ID.
+- **Folding & capabilities**: Fix unfolded read-only tool rounds, restore timeouts, and cleared global capabilities.
 
 ## 0.14.3
 

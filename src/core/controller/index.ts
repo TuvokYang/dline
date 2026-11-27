@@ -32,7 +32,12 @@ import { getProfileCatalogRevision } from "@core/profiles/profile-catalog-state"
 import { settingsAffectPromptFreshness } from "@core/prompts/system-prompt-cache/PromptFreshnessProjection"
 import * as SecretsManager from "@core/storage/secrets"
 import { capabilityResourceId } from "@core/storage/settings/capability-resource-id"
-import { type CapabilityKind, mergeScopedToggles, readScopedToggles } from "@core/storage/settings/capability-toggle-store"
+import {
+    type CapabilityKind,
+    capabilityToggleSettingsKey,
+    mergeScopedToggles,
+    readScopedToggles,
+} from "@core/storage/settings/capability-toggle-store"
 import { detectWorkspaceRoots } from "@core/workspace/detection"
 import { setupWorkspaceManager } from "@core/workspace/setup"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
@@ -124,7 +129,7 @@ import { approvalInteractionId } from "../task/tools/approval-interaction"
 import { KernelTaskViewPort } from "../task/view/KernelTaskViewPort"
 import { type OpeningTrajectoryAccess, openingTrajectoryAccess } from "../trajectory/OpeningTrajectoryAccess"
 import { TrajectoryAdmission } from "../trajectory/TrajectorySource"
-import { readDiscoveredToggles } from "./file/capability-discovery-cache"
+import { hasDiscoveredTogglesSnapshot, readDiscoveredToggles } from "./file/capability-discovery-cache"
 import {
     getWorkspaceHistoryManager,
     type WorkspaceHistoryManager,
@@ -230,7 +235,7 @@ type InitTaskOptions = {
 
 type PostStateOptions = {
     immediate?: boolean
-    projection?: "full" | "ui-language"
+    projection?: "full" | "ui-language" | "input-queue"
 }
 
 export type ControllerCloseReason =
@@ -274,6 +279,37 @@ https://github.com/microsoft/vscode-webview-ui-toolkit-samples/blob/main/default
 https://github.com/KumarVariable/vscode-extension-sidebar-html/blob/master/src/customSidebarViewProvider.ts
 */
 
+/** Project the current visible input queue for either an active task or history display. */
+async function projectInputQueueForSurface(
+    task: ActiveTaskSession | undefined,
+    historyDisplay: HistoryDisplaySession | undefined,
+) {
+    return task?.inputQueue ? [...(await task.inputQueue.project())] : [...(historyDisplay?.getInputQueue() ?? [])]
+}
+
+/**
+ * Lightweight in-memory fingerprint of the visible canonical input queue.
+ *
+ * Allows committed task-view patches to include `inputQueue` only when a
+ * durable transition changed visible queue entries (enqueue, edit, reorder,
+ * reserve, consume, release), without doing payload I/O on unchanged turns.
+ */
+function readCanonicalInputQueueSignature(session: ActiveTaskSession | undefined): string | undefined {
+    if (!session || typeof session.state !== "function") return undefined
+    const entries = session
+        .state()
+        .intake.queued.filter(
+            (entry) =>
+                entry.source === "user" &&
+                entry.queue !== undefined &&
+                (entry.state === "accepted" || entry.state === "released"),
+        )
+        .sort((left, right) => left.sequence - right.sequence)
+    return `${session.taskId}:${entries
+        .map((entry) => `${entry.entryId}:${entry.payloadRef}:${entry.mode}:${entry.queue?.editing ? 1 : 0}:${entry.sequence}`)
+        .join("|")}`
+}
+
 export class Controller {
     /**
      * One backfill scan per process.
@@ -308,6 +344,8 @@ export class Controller {
      * row after the first title sync, so this text titles the tab until then.
      */
     private initialPanelTitle?: { readonly taskId: string; readonly text: string }
+    /** Monotonic guard so a slower title sync cannot overwrite a newer one. */
+    private panelTitleSequence = 0
 
     mcpHub: McpHub
     readonly mcpOwnerId = randomUUID()
@@ -357,6 +395,8 @@ export class Controller {
     private readonly profileSwitchCoordinator: ProfileSwitchCoordinator
     private nextStateRevision = 0
     private latestStateRevision = 0
+    /** Lightweight fingerprint of the visible canonical input queue last published to the Webview. */
+    private publishedInputQueueSignature?: string
     /** Counts publications started, so a dropped build can tell whether a newer one is on its way. */
     private publicationSequence = 0
     /** Pending coalescing window for non-immediate state publications. */
@@ -384,22 +424,48 @@ export class Controller {
      */
     private getInheritedTaskCapabilityToggles(): TaskCapabilityToggles {
         return createTaskCapabilityToggles({
-            globalClineRulesToggles: this.stateManager.getGlobalSettingsKey("globalClineRulesToggles") || {},
+            globalClineRulesToggles: this.readGlobalCapabilityToggles("rules"),
             localClineRulesToggles: this.readLocalCapabilityToggles("rules"),
             localCursorRulesToggles: this.readLocalCapabilityToggles("cursorRules"),
             localWindsurfRulesToggles: this.readLocalCapabilityToggles("windsurfRules"),
             localAgentsRulesToggles: this.readLocalCapabilityToggles("agentsRules"),
-            globalWorkflowToggles: this.stateManager.getGlobalSettingsKey("globalWorkflowToggles") || {},
+            globalWorkflowToggles: this.readGlobalCapabilityToggles("workflows"),
             localWorkflowToggles: this.readLocalCapabilityToggles("workflows"),
-            globalSkillsToggles: this.stateManager.getGlobalSettingsKey("globalSkillsToggles") || {},
+            globalSkillsToggles: this.readGlobalCapabilityToggles("skills"),
             localSkillsToggles: this.readLocalCapabilityToggles("skills"),
             remoteSkillsToggles: this.stateManager.getGlobalStateKey("remoteSkillsToggles") || {},
             remoteRulesToggles: this.stateManager.getGlobalStateKey("remoteRulesToggles") || {},
             remoteWorkflowToggles: this.stateManager.getGlobalStateKey("remoteWorkflowToggles") || {},
-            globalSubagentsToggles: this.stateManager.getGlobalSettingsKey("globalSubagentsToggles") || {},
+            globalSubagentsToggles: this.readGlobalCapabilityToggles("subagents"),
             localSubagentsToggles: this.readLocalCapabilityToggles("subagents"),
             mcpServers: Object.fromEntries(this.getMcpServersForOwner().map((server) => [server.name, server.disabled !== true])),
         })
+    }
+
+    /**
+     * Resolve the effective state of every globally discovered resource of one kind.
+     *
+     * Global preferences in Settings are sparse overrides just like workspace overrides;
+     * publishing the raw override map on every state push would wipe discovered global
+     * rules, workflows and skills back to `{}` whenever a task resumes or updates state.
+     */
+    private readGlobalCapabilityToggles(kind: CapabilityKind): Record<string, boolean> {
+        const controller = this as unknown as Controller
+        if (!hasDiscoveredTogglesSnapshot(controller, kind, "global")) {
+            return (
+                (this.stateManager.getGlobalSettingsKey(capabilityToggleSettingsKey(kind, "global")) as
+                    | Record<string, boolean>
+                    | undefined) || {}
+            )
+        }
+        const overrides = mergeScopedToggles(readScopedToggles(this.stateManager, kind))
+        const discovered = readDiscoveredToggles(controller, kind, "global")
+        const resolved: Record<string, boolean> = {}
+        for (const [resourcePath, enabled] of Object.entries(discovered)) {
+            const id = capabilityResourceId(resourcePath)
+            resolved[resourcePath] = overrides[id] ?? overrides[resourcePath] ?? enabled
+        }
+        return resolved
     }
 
     /**
@@ -1379,7 +1445,7 @@ export class Controller {
             const terminalExecutionMode = vscodeTerminalExecutionMode ?? "vscodeTerminal"
             const taskView = new KernelTaskViewPort({
                 // CommitPipeline invokes this only after the canonical state is durable.
-                publishCommitted: async () => this.postTaskViewPatchToWebview(),
+                publishCommitted: async () => this.postTaskViewPatchToWebview({ syncInputQueue: true }),
                 // Streaming projections are superseded by the newest projection in
                 // the same microtask instead of rebuilding the full ExtensionState.
                 publishTransient: () => this.scheduleTaskViewPatch(),
@@ -2566,18 +2632,28 @@ export class Controller {
             return
         }
         const session = this.task
+        // Same fallback as buildState: the task state can be empty while the
+        // checklist still exists as the last task_progress row. Without it the tab
+        // and the chat rendered different progress for the same task.
+        const { getLastTaskProgressText } = await import("@shared/getApiMetrics")
+        const checklist =
+            session?.owners.toolState.currentFocusChainChecklist ??
+            getLastTaskProgressText(this.historyDisplaySession?.getMessages() ?? [])
         const resolvedTitle = resolveTaskPanelTitle({
             taskRow: session?.owners.messages.clineMessages.find((message) => message.say === "task")?.text,
             initialTask: session && this.initialPanelTitle?.taskId === session.taskId ? this.initialPanelTitle.text : undefined,
             historyTask: this.historyDisplaySession?.historyItem.task,
-            checklist: session?.owners.toolState.currentFocusChainChecklist ?? null,
+            checklist,
         })
+        // Concurrent syncs can finish out of order; only the newest may write.
+        const sequence = ++this.panelTitleSequence
         try {
             const { WebviewProviderRegistry } = await import("@/core/webview/WebviewProviderRegistry")
             const { VscodeWebviewPanelProvider } = await import("@/hosts/vscode/VscodeWebviewPanelProvider")
             const panels = WebviewProviderRegistry.getPanels()
             for (const provider of panels) {
                 if (provider instanceof VscodeWebviewPanelProvider && provider.hasController() && provider.controller === this) {
+                    if (sequence !== this.panelTitleSequence) return
                     provider.updateTitle(resolvedTitle)
                     // The title is derived from the user's task text, so only its size is logged.
                     Logger.debug(`[Controller] Panel title synced: chars=${resolvedTitle.length}`)
@@ -2904,6 +2980,25 @@ export class Controller {
             )
             return
         }
+        // Queue mutations only change `inputQueue` and must not wait behind full
+        // state builds that active streaming/compaction patches repeatedly make stale.
+        if (options?.projection === "input-queue") {
+            this.stateManager.setActiveTaskId(this.getCurrentTaskId())
+            const inputQueue = await projectInputQueueForSurface(this.task, this.historyDisplaySession)
+            if (this.uiDetached || this.disposed) return
+            const stateRevision = ++this.nextStateRevision
+            this.latestStateRevision = Math.max(this.latestStateRevision, stateRevision)
+            this.publishedInputQueueSignature = readCanonicalInputQueueSignature(this.task)
+            await sendStatePatch(
+                this,
+                {
+                    stateRevision,
+                    inputQueue,
+                },
+                this._accountUsage,
+            )
+            return
+        }
         // Coalescing downstream of the build only saved delivery: every caller in
         // a burst still paid for a full state build whose result was then
         // discarded. Merging first makes the build itself happen once per window.
@@ -2977,7 +3072,7 @@ export class Controller {
     }
 
     /** Publish the interaction-critical Task view without paying for a full ExtensionState build. */
-    async postTaskViewPatchToWebview(): Promise<void> {
+    async postTaskViewPatchToWebview(options?: { syncInputQueue?: boolean }): Promise<void> {
         if (this.uiDetached || this.disposed || !this.getCurrentTaskId()) {
             this.suppressedStatePostsAfterDetach++
             return
@@ -2992,6 +3087,15 @@ export class Controller {
             return
         }
         this.stateManager.setActiveTaskId(this.getCurrentTaskId())
+        let inputQueue: ExtensionState["inputQueue"] | undefined
+        if (options?.syncInputQueue && this.task?.inputQueue) {
+            const signature = readCanonicalInputQueueSignature(this.task)
+            if (signature !== undefined && signature !== this.publishedInputQueueSignature) {
+                inputQueue = [...(await this.task.inputQueue.project())]
+                if (this.uiDetached || this.disposed || !this.getCurrentTaskId()) return
+                this.publishedInputQueueSignature = readCanonicalInputQueueSignature(this.task)
+            }
+        }
         const stateRevision = ++this.nextStateRevision
         this.latestStateRevision = Math.max(this.latestStateRevision, stateRevision)
         await sendStatePatch(
@@ -2999,6 +3103,7 @@ export class Controller {
             {
                 stateRevision,
                 taskViewState: this.projectCurrentTaskViewState(),
+                ...(inputQueue !== undefined ? { inputQueue } : {}),
             },
             this._accountUsage,
         )
@@ -3208,9 +3313,9 @@ export class Controller {
         const errorReportingSetting = this.stateManager.getGlobalSettingsKey("errorReportingSetting")
         const planActSeparateModelsSetting = this.stateManager.getGlobalSettingsKey("planActSeparateModelsSetting")
         const enableCheckpointsSetting = this.stateManager.getGlobalSettingsKey("enableCheckpointsSetting")
-        const globalClineRulesToggles = this.stateManager.getGlobalSettingsKey("globalClineRulesToggles")
-        const globalWorkflowToggles = this.stateManager.getGlobalSettingsKey("globalWorkflowToggles")
-        const globalSkillsToggles = this.stateManager.getGlobalSettingsKey("globalSkillsToggles")
+        const globalClineRulesToggles = this.readGlobalCapabilityToggles("rules")
+        const globalWorkflowToggles = this.readGlobalCapabilityToggles("workflows")
+        const globalSkillsToggles = this.readGlobalCapabilityToggles("skills")
         const taskCapabilityToggles = parseTaskCapabilityToggles(this.task?.owners.settings.taskCapabilityToggles)
         const localSkillsToggles = this.readLocalCapabilityToggles("skills")
         const remoteSkillsToggles = this.stateManager.getGlobalStateKey("remoteSkillsToggles")
@@ -3479,9 +3584,11 @@ export class Controller {
              * The projection is optional so a task stub without a queue still
              * builds state instead of throwing.
              */
-            inputQueue: this.task
-                ? [...(await this.task.inputQueue.project())]
-                : [...(this.historyDisplaySession?.getInputQueue() ?? [])],
+            inputQueue: await (async () => {
+                const projected = await projectInputQueueForSurface(this.task, this.historyDisplaySession)
+                this.publishedInputQueueSignature = readCanonicalInputQueueSignature(this.task)
+                return projected
+            })(),
             transitionDraft: this.task ? await projectTransitionDraft(this.task) : undefined,
             /** Complete interaction view projected only from canonical runtime state. */
             taskViewState: this.projectCurrentTaskViewState(rawMessages),

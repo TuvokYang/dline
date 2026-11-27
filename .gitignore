@@ -59,5 +59,29 @@ tests/**/cache
 .README.github.bak
 
 # Keep documentation source GIF assets tracked.
+!/assets/docs/ui/docs-auto-approve.gif
+!/assets/docs/ui/docs-auto-approve-light.gif
+!/assets/docs/ui/docs-auto-compact.gif
+!/assets/docs/ui/docs-auto-compact-light.gif
+!/assets/docs/ui/docs-capability-toggles.gif
+!/assets/docs/ui/docs-capability-toggles-light.gif
+!/assets/docs/ui/docs-context-mention.gif
+!/assets/docs/ui/docs-context-mention-light.gif
+!/assets/docs/ui/docs-environment-variable.gif
+!/assets/docs/ui/docs-environment-variable-light.gif
+!/assets/docs/ui/docs-jupyter-explain-improve.gif
+!/assets/docs/ui/docs-jupyter-explain-improve-light.gif
+!/assets/docs/ui/docs-jupyter-generate-cell.gif
+!/assets/docs/ui/docs-jupyter-generate-cell-light.gif
+!/assets/docs/ui/docs-mcp.gif
+!/assets/docs/ui/docs-mcp-light.gif
+!/assets/docs/ui/docs-mode-switch.gif
+!/assets/docs/ui/docs-mode-switch-light.gif
 !/assets/docs/ui/docs-parallel-tasks.gif
 !/assets/docs/ui/docs-parallel-tasks-light.gif
+!/assets/docs/ui/docs-profile-setup.gif
+!/assets/docs/ui/docs-profile-setup-light.gif
+!/assets/docs/ui/docs-slash-workflow.gif
+!/assets/docs/ui/docs-slash-workflow-light.gif
+!/assets/docs/ui/docs-subagents.gif
+!/assets/docs/ui/docs-subagents-light.gif

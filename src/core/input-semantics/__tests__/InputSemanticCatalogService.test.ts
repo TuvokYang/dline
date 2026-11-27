@@ -169,4 +169,21 @@ describe("InputSemanticCatalogService", () => {
             }),
         )
     })
+
+    it("notifies change listeners when discovered or refresh advances the revision and stops after unsubscribe", async () => {
+        const source = port({ skills: ["a"], workflows: [], mcpPrompts: [] })
+        const service = new InputSemanticCatalogService(source.port)
+        const revisions: number[] = []
+        const unsubscribe = service.onDidChange((catalog) => revisions.push(catalog.revision))
+
+        await service.discovered()
+        await service.refresh()
+        source.set({ skills: ["a", "b"], workflows: [], mcpPrompts: [] })
+        await service.refresh()
+        unsubscribe()
+        source.set(empty)
+        await service.refresh()
+
+        expect(revisions).toEqual([1, 2])
+    })
 })

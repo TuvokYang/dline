@@ -1,7 +1,13 @@
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { describe, expect, it } from "vitest"
-import { parseWhatsNew, parseWhatsNewEditions, WHATS_NEW_SOURCE } from "../../vite-whats-new"
+import {
+    applyPackagingVersion,
+    parseWhatsNew,
+    parseWhatsNewEditions,
+    UNRELEASED_SECTION,
+    WHATS_NEW_SOURCE,
+} from "../../vite-whats-new"
 
 const CHINESE_SOURCE = WHATS_NEW_SOURCE.replace(/WHATS_NEW_en\.md$/, "WHATS_NEW.md")
 const PACKAGE_MANIFEST = resolve(__dirname, "../../../package.json")
@@ -58,6 +64,27 @@ describe("parseWhatsNew", () => {
         expect(() => parse("# What's New\n\n- item\n")).toThrow('WHATS_NEW_en.md: no release heading such as "## 1.2.3"')
     })
 
+    it("accepts an unreleased section as the development release", () => {
+        const release = parse("## Unreleased\n- item\n")
+        expect(release.version).toBe(UNRELEASED_SECTION)
+        expect(release.items).toHaveLength(1)
+    })
+
+    it("names an unreleased section with the packaged version", () => {
+        const release = parse("## Unreleased\n- item\n")
+        expect(applyPackagingVersion(release, "0.14.3-abc1234").version).toBe("0.14.3-abc1234")
+    })
+
+    it("keeps a frozen section under its own version", () => {
+        const release = parse("## 1.2.0\n- item\n")
+        expect(applyPackagingVersion(release, "9.9.9").version).toBe("1.2.0")
+    })
+
+    it("keeps the unreleased version when no packaged version is provided", () => {
+        const release = parse("## Unreleased\n- item\n")
+        expect(applyPackagingVersion(release, undefined).version).toBe(UNRELEASED_SECTION)
+    })
+
     it.each([
         ["## [1.2.0]"],
         ["## v1.2.0"],
@@ -65,7 +92,7 @@ describe("parseWhatsNew", () => {
         ["## Format"],
     ])("rejects %s as the first section instead of skipping to an older release", (heading) => {
         expect(() => parse(`${heading}\n- new item\n\n## 1.1.0\n- old item\n`)).toThrow(
-            `WHATS_NEW_en.md:1: the first "##" heading must be a bare release version such as "## 1.2.3", got "${heading}".`,
+            `WHATS_NEW_en.md:1: the first "##" heading must be a bare release version such as "## 1.2.3" or "## Unreleased", got "${heading}".`,
         )
     })
 
@@ -143,9 +170,12 @@ describe("What's New documents", () => {
     const english = parseWhatsNew(readFileSync(WHATS_NEW_SOURCE, "utf8"), WHATS_NEW_SOURCE)
     const chinese = parseWhatsNew(readFileSync(CHINESE_SOURCE, "utf8"), CHINESE_SOURCE)
 
-    it("ships a section written for the package version", () => {
+    it("ships the package version, or the unreleased section that precedes it", () => {
         // Every version bump adds a What's New section (repository-and-release), so a bump
         // that skipped it fails here instead of shipping the previous release's highlights.
+        // An Unreleased section is not frozen yet: dev and insiders builds show it, and
+        // preparing the version renames it to the manifest version.
+        if (english.version === UNRELEASED_SECTION) return
         const manifest = JSON.parse(readFileSync(PACKAGE_MANIFEST, "utf8")) as { version: string }
         expect(english.version).toBe(manifest.version)
     })

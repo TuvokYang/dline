@@ -1,6 +1,8 @@
 import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import { CheckpointRestoreRequest } from "@shared/proto/dline/checkpoints"
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import { HostProvider } from "@/hosts/host-provider"
+import { ShowMessageType } from "@/shared/proto/dline/host"
 import { checkpointRestore } from "./checkpointRestore"
 
 /** The checkpoint owner, not the RPC boundary, owns validation and runtime fencing. */
@@ -82,6 +84,10 @@ describe("checkpointRestore controller", () => {
         expect(completeTaskCheckpointRestore).not.toHaveBeenCalled()
     })
 
+    afterEach(() => {
+        vi.restoreAllMocks()
+    })
+
     it("passes edited historical input to the restore transaction for immediate continuation", async () => {
         const { controller, restoreCheckpoint } = createController()
 
@@ -95,5 +101,75 @@ describe("checkpointRestore controller", () => {
         )
 
         expect(restoreCheckpoint).toHaveBeenCalledWith(42, "task", 7, "continue from the edited request")
+    })
+
+    it("promotes an unlocked history display session before restoring a checkpoint", async () => {
+        const restoreCheckpoint = vi.fn().mockResolvedValue({})
+        const completeTaskCheckpointRestore = vi.fn(async () => undefined)
+        const promotedTask = createSessionFixture({
+            taskId: "task-1",
+            taskInstanceId: "open-1",
+            owners: { checkpoints: { restoreCheckpoint } },
+        })
+        const historyDisplaySession = {
+            taskId: "task-1",
+            taskInstanceId: "open-1",
+            isLocked: () => false,
+        }
+        let currentHistoryDisplay: typeof historyDisplaySession | undefined = historyDisplaySession
+        const controller: {
+            task: typeof promotedTask | undefined
+            hasHistoryDisplaySession: () => boolean
+            canPromoteHistoryDisplay: (taskId: string) => boolean
+            currentOpening: () => { taskId: string; taskInstanceId: string } | undefined
+            promoteHistoryDisplayForActivityControl: ReturnType<typeof vi.fn>
+            completeTaskCheckpointRestore: typeof completeTaskCheckpointRestore
+        } = {
+            task: undefined,
+            hasHistoryDisplaySession: () => currentHistoryDisplay !== undefined,
+            canPromoteHistoryDisplay: (taskId) => currentHistoryDisplay?.taskId === taskId && !currentHistoryDisplay.isLocked(),
+            currentOpening: () => controller.task ?? currentHistoryDisplay,
+            promoteHistoryDisplayForActivityControl: vi.fn(async () => {
+                currentHistoryDisplay = undefined
+                controller.task = promotedTask
+                return true
+            }),
+            completeTaskCheckpointRestore,
+        }
+
+        await checkpointRestore(controller as never, request({ restoreType: "task" }))
+
+        expect(controller.promoteHistoryDisplayForActivityControl).toHaveBeenCalledWith("task-1", historyDisplaySession)
+        expect(restoreCheckpoint).toHaveBeenCalledWith(42, "task", undefined, undefined)
+        expect(completeTaskCheckpointRestore).toHaveBeenCalledWith("task-1")
+    })
+
+    it("warns immediately without timing out when restoring a locked history display session", async () => {
+        const showMessage = vi.fn(async () => ({}))
+        vi.spyOn(HostProvider, "window", "get").mockReturnValue({ showMessage } as never)
+        const historyDisplaySession = {
+            taskId: "task-1",
+            taskInstanceId: "open-1",
+            isLocked: () => true,
+        }
+        const promoteHistoryDisplayForActivityControl = vi.fn(async () => false)
+        const completeTaskCheckpointRestore = vi.fn(async () => undefined)
+        const controller = {
+            task: undefined,
+            hasHistoryDisplaySession: () => true,
+            canPromoteHistoryDisplay: () => false,
+            currentOpening: () => historyDisplaySession,
+            promoteHistoryDisplayForActivityControl,
+            completeTaskCheckpointRestore,
+        }
+
+        await checkpointRestore(controller as never, request({ restoreType: "task" }))
+
+        expect(promoteHistoryDisplayForActivityControl).not.toHaveBeenCalled()
+        expect(completeTaskCheckpointRestore).not.toHaveBeenCalled()
+        expect(showMessage).toHaveBeenCalledWith({
+            type: ShowMessageType.WARNING,
+            message: "This task is open in another window. Take it over before restoring a checkpoint.",
+        })
     })
 })

@@ -101,6 +101,8 @@ jobs:
             install_webview: "true"
     steps:
       - uses: actions/checkout@v6
+      - name: Fetch brand assets
+        run: git lfs pull --include="assets/icons/**"
       - uses: ./.github/actions/setup-project
         with:
           install-webview: ${{ matrix.install_webview }}

@@ -24,6 +24,8 @@ export async function refreshWorkflowToggles(
 ): Promise<{
     globalWorkflowToggles: ClineRulesToggles
     localWorkflowToggles: ClineRulesToggles
+    discoveredGlobalToggles: ClineRulesToggles
+    globalScanComplete: boolean
     discoveredLocalToggles: ClineRulesToggles
     localScanComplete: boolean
 }> {
@@ -32,8 +34,9 @@ export async function refreshWorkflowToggles(
 
     const discoveredGlobal: ClineRulesToggles = {}
     const discoveredLocal: ClineRulesToggles = {}
-    // One unreadable local root makes the whole local result untrustworthy: the
-    // caller cannot tell which workflows that root would have contributed.
+    // One unreadable root makes that scope's scan untrustworthy: the caller
+    // cannot tell which workflows that root would have contributed.
+    let globalScanComplete = true
     let localScanComplete = true
 
     // Scan each directory independently, then merge the discovered paths. Passing
@@ -43,6 +46,7 @@ export async function refreshWorkflowToggles(
         const scan = await scanRuleToggles(dir.path, {})
         if (dir.source === "global") {
             Object.assign(discoveredGlobal, scan.toggles)
+            if (!scan.complete) globalScanComplete = false
         } else {
             Object.assign(discoveredLocal, scan.toggles)
             if (!scan.complete) localScanComplete = false
@@ -61,21 +65,24 @@ export async function refreshWorkflowToggles(
             directories: scanDirs.length,
             global: Object.keys(globalToggles).length,
             local: Object.keys(localToggles).length,
+            globalComplete: globalScanComplete,
             localComplete: localScanComplete,
         },
         { taskId: controller.task?.taskId },
     )
     if (Logger.isDebugEnabled()) {
         Logger.debug(
-            `[CapabilityPerf] phase=workflows_refresh taskId=${controller.task?.taskId ?? "none"} durationMs=${Math.round(performance.now() - startedAt)} directories=${scanDirs.length} global=${Object.keys(globalToggles).length} local=${Object.keys(localToggles).length} localComplete=${localScanComplete}`,
+            `[CapabilityPerf] phase=workflows_refresh taskId=${controller.task?.taskId ?? "none"} durationMs=${Math.round(performance.now() - startedAt)} directories=${scanDirs.length} global=${Object.keys(globalToggles).length} local=${Object.keys(localToggles).length} globalComplete=${globalScanComplete} localComplete=${localScanComplete}`,
         )
     }
 
     return {
         globalWorkflowToggles: globalToggles,
         localWorkflowToggles: localToggles,
-        // The raw scan says which workflows exist; the resolved map above already
-        // folds in the user's overrides and cannot answer that question.
+        // The raw scan says which workflows exist; the resolved maps above already
+        // fold in the user's overrides and cannot answer that question.
+        discoveredGlobalToggles: discoveredGlobal,
+        globalScanComplete,
         discoveredLocalToggles: discoveredLocal,
         localScanComplete,
     }

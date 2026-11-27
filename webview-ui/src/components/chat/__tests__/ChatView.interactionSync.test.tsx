@@ -147,6 +147,7 @@ vi.mock("../chat-view", async () => {
             placeholderText,
             semanticCatalog,
             submissionScope,
+            submitKind,
         }: {
             canQueueInput?: boolean
             chatState: Pick<ChatState, "inputValue" | "sendingDisabled" | "composer">
@@ -158,6 +159,7 @@ vi.mock("../chat-view", async () => {
             placeholderText: string
             semanticCatalog: InputSemanticCatalog
             submissionScope?: string
+            submitKind?: string
         }) => (
             <div>
                 <textarea
@@ -165,6 +167,7 @@ vi.mock("../chat-view", async () => {
                     data-can-queue={String(canQueueInput)}
                     data-route={onSubmit ? "task" : "new-task"}
                     data-submission-scope={submissionScope ?? "home"}
+                    data-submit-kind={submitKind ?? ""}
                     disabled={enabled === undefined ? chatState.sendingDisabled : !enabled}
                     placeholder={placeholderText}
                     readOnly
@@ -759,6 +762,68 @@ describe("ChatView interaction anchor synchronization", () => {
         view.contextCompaction = { active: true, operationId: "manual-compaction:task-1:8" }
         renderChat([ASK], view)
         expect(screen.getByRole("textbox", { name: "Task input" })).toHaveAttribute("data-can-queue", "true")
+        cleanup()
+
+        // Compaction running beside a completed or paused task (including condense review) must remain queueable.
+        const completedCompacting = taskView()
+        completedCompacting.phase = "completed"
+        completedCompacting.input.enabled = false
+        completedCompacting.contextCompaction = { active: true, operationId: "manual-compaction:task-1:9" }
+        renderChat([ASK], completedCompacting)
+        expect(screen.getByRole("textbox", { name: "Task input" })).toHaveAttribute("data-can-queue", "true")
+        cleanup()
+
+        // Active mode-switch compaction/committing also keeps the queue open.
+        const modeCompacting = taskView()
+        modeCompacting.phase = "paused"
+        modeCompacting.input.enabled = false
+        const modeRendered = renderChat([ASK], modeCompacting)
+        mocks.extensionState = {
+            ...mocks.extensionState,
+            modeSwitch: { phase: "compacting", targetMode: "act" },
+        }
+        modeRendered.rerender(chatView())
+        expect(screen.getByRole("textbox", { name: "Task input" })).toHaveAttribute("data-can-queue", "true")
+        cleanup()
+
+        // A resolving Resume dialog means the user already resumed the task, so queueing must be unlocked.
+        const resolvingResume = taskView()
+        if (!resolvingResume.activeInteraction) throw new Error("Expected active interaction")
+        resolvingResume.phase = "paused"
+        resolvingResume.input = { ...resolvingResume.input, enabled: false, enterAction: undefined, queueable: true }
+        resolvingResume.activeInteraction = { ...resolvingResume.activeInteraction, kind: "resume", status: "resolving" }
+        resolvingResume.footer.actions = [
+            {
+                type: "resume",
+                label: "Resume",
+                appearance: "primary",
+                enabled: false,
+                payloadPolicy: "draft",
+                dispatchTarget: "interaction",
+            },
+        ]
+        renderChat([ASK], resolvingResume)
+        expect(screen.getByRole("textbox", { name: "Task input" })).toHaveAttribute("data-can-queue", "true")
+        expect(screen.getByRole("textbox", { name: "Task input" })).toHaveAttribute("data-submit-kind", "send")
+        cleanup()
+
+        // Read-only and cancelling views must still refuse new queued writes even while compaction is reported active.
+        const cancelling = taskView()
+        cancelling.phase = "cancelling"
+        cancelling.contextCompaction = { active: true, operationId: "manual-compaction:task-1:10" }
+        renderChat([ASK], cancelling)
+        expect(screen.getByRole("textbox", { name: "Task input" })).toHaveAttribute("data-can-queue", "false")
+        cleanup()
+
+        const readOnly = taskView()
+        readOnly.phase = "streaming"
+        const readOnlyRendered = renderChat([ASK], readOnly)
+        mocks.extensionState = {
+            ...mocks.extensionState,
+            taskLockStatus: { isLocked: true, ownerWindowId: "other-window", lockAcquiredAt: 1 },
+        }
+        readOnlyRendered.rerender(chatView())
+        expect(screen.getByRole("textbox", { name: "Task input" })).toHaveAttribute("data-can-queue", "false")
     })
 
     it("disables Compact immediately while the command is pending and rejects a duplicate submission", async () => {

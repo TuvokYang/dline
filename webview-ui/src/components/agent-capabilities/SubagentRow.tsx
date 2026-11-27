@@ -317,11 +317,41 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
         if (pendingEnabled === agent.enabled) setPendingEnabled(undefined)
     }, [agent.enabled, pendingEnabled])
 
+    // The tool summary is always visible, so its directory cannot wait for the
+    // row to be expanded. getAvailableTools only enumerates built-in identities,
+    // so loading it per row is cheap; the heavier capability directories stay on
+    // the expansion path below.
+    useEffect(() => {
+        let cancelled = false
+        FileServiceClient.getAvailableTools({} as EmptyRequest)
+            .then((response) => {
+                if (!cancelled) setToolGroups(response.groups || [])
+            })
+            .catch((cause) => {
+                if (!cancelled)
+                    setErrors((current) => ({
+                        ...current,
+                        tools: cause instanceof Error ? cause.message : String(cause),
+                    }))
+            })
+            .finally(() => {
+                if (!cancelled) setLoading((current) => ({ ...current, tools: false }))
+            })
+        return () => {
+            cancelled = true
+        }
+    }, [])
+
     useEffect(() => {
         if (!expanded) return
         let cancelled = false
-        setLoading({ tools: true, capabilities: true, profiles: true })
-        setErrors({})
+        // The tool directory is loaded on mount and stays valid across expansion,
+        // so only the directories this effect owns are reset to loading.
+        setLoading((current) => ({ ...current, capabilities: true, profiles: true }))
+        setErrors((current) => {
+            const { capabilities: _c, profiles: _p, ...rest } = current
+            return rest
+        })
         const failed = (kind: "tools" | "capabilities" | "profiles", cause: unknown) => {
             if (!cancelled)
                 setErrors((current) => ({ ...current, [kind]: cause instanceof Error ? cause.message : String(cause) }))
@@ -329,12 +359,6 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
         const done = (kind: "tools" | "capabilities" | "profiles") => {
             if (!cancelled) setLoading((current) => ({ ...current, [kind]: false }))
         }
-        FileServiceClient.getAvailableTools({} as EmptyRequest)
-            .then((response) => {
-                if (!cancelled) setToolGroups(response.groups || [])
-            })
-            .catch((cause) => failed("tools", cause))
-            .finally(() => done("tools"))
         FileServiceClient.getSubagentCapabilities({ subagentPath: agent.path })
             .then((response) => {
                 if (!cancelled) setCapabilities(response)
@@ -510,10 +534,14 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
                         <span className="ml-2 max-w-[200px] truncate text-xs text-description">{agent.description}</span>
                     )}
                     <span className="ml-2 text-xs text-description">
-                        {t("capabilities.subagent.toolSummary", {
-                            active: counts("tools").active,
-                            total: counts("tools").total,
-                        })}
+                        {loading.tools
+                            ? t("capabilities.subagent.loading", { name: t(LABELS.tools) })
+                            : errors.tools
+                              ? t("capabilities.subagent.directoryUnavailable")
+                              : t("capabilities.subagent.toolSummary", {
+                                    active: counts("tools").active,
+                                    total: counts("tools").total,
+                                })}
                     </span>
                 </span>
                 <div className="flex items-center gap-2">

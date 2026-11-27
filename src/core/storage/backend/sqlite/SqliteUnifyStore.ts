@@ -65,8 +65,18 @@ interface PragmaRow {
     readonly page_size?: number
 }
 
+export interface SqliteReadableUnifyStoreDatabase extends TransactionalUnifyStoreDatabase {
+    /**
+     * Run one synchronous read-only SQLite operation under this database's lease lock.
+     *
+     * Used for exact SQL aggregations that cannot be expressed through row-fetching
+     * `UnifyStore` queries without materializing tens of thousands of entities into JS memory.
+     */
+    read<TResult>(operation: (database: DatabaseSync) => TResult): Promise<TResult>
+}
+
 export class SqliteUnifyStoreBackend implements TransactionalUnifyStoreBackend {
-    async open(location: string, options: { readonly?: boolean } = {}): Promise<TransactionalUnifyStoreDatabase> {
+    async open(location: string, options: { readonly?: boolean } = {}): Promise<SqliteReadableUnifyStoreDatabase> {
         const lease = await registry.acquire(location, {
             applicationId: APPLICATION_ID,
             migrations: UNIFY_STORE_MIGRATIONS,
@@ -76,7 +86,7 @@ export class SqliteUnifyStoreBackend implements TransactionalUnifyStoreBackend {
     }
 }
 
-class SqliteUnifyStoreDatabase implements TransactionalUnifyStoreDatabase {
+class SqliteUnifyStoreDatabase implements SqliteReadableUnifyStoreDatabase {
     private closed = false
     private closePromise: Promise<void> | undefined
 
@@ -163,6 +173,14 @@ class SqliteUnifyStoreDatabase implements TransactionalUnifyStoreDatabase {
                 rollbackPreservingOriginal(database)
                 throw error
             }
+        })
+    }
+
+    async read<TResult>(operation: (database: DatabaseSync) => TResult): Promise<TResult> {
+        this.assertOpen()
+        return await this.lease.withLock(() => {
+            this.assertOpen()
+            return operation(this.lease.database)
         })
     }
 

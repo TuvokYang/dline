@@ -74,7 +74,18 @@ export class VscodeDiffViewProvider extends DiffViewProvider {
                 let commandFinished = false
                 let revealed: vscode.TextEditor | undefined
                 const observe = (editors: readonly vscode.TextEditor[]) => {
-                    revealed = editors.find((candidate) => arePathsEqual(candidate.document.uri.fsPath, uri.fsPath)) ?? revealed
+                    // Notebook cells can share the file's fsPath without being the modified file document.
+                    revealed =
+                        editors.find(({ document }) => {
+                            const candidate = document.uri
+                            return (
+                                candidate.scheme === uri.scheme &&
+                                candidate.authority === uri.authority &&
+                                arePathsEqual(candidate.fsPath, uri.fsPath) &&
+                                candidate.query === uri.query &&
+                                candidate.fragment === uri.fragment
+                            )
+                        }) ?? revealed
                     // Another reveal can hide this editor before its command finishes; the document remains editable.
                     if (commandFinished && revealed && !revealed.document.isClosed) resolve(revealed)
                 }

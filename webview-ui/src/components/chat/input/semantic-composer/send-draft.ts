@@ -46,7 +46,7 @@ export type ComposerSendBlock =
  * back and the user is told it was refused rather than seeing it reappear
  * unexplained.
  */
-export type ComposerSendRefusal = ComposerSendBlock | "input_not_ready" | "submission_rejected"
+export type ComposerSendRefusal = ComposerSendBlock | "input_not_ready" | "submission_rejected" | "queue_full"
 
 export interface ComposerSendContext {
     readonly catalog: InputSemanticCatalog

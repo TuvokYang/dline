@@ -101,6 +101,12 @@ For Anthropic and Claude Code, a canonical new Claude minor version can fill mis
 
 The selected model's declarations and explicit Profile overrides win, including `false` and an empty effort list. Inherited effort and budget modes keep their native request format; without a usable ancestor, Dline does not guess a thinking mode. Prices, context/output limits, images, hosted tools, and protocols do not inherit. Unrecognized aliases and dated snapshots are not automatically mapped to a family.
 
+## Undeclared hosted Web Search and custom pricing
+
+For an Anthropic model whose hosted tools are undeclared, **Model Configuration** lets you check **Use hosted Web Search** as a compatibility attempt. It starts unchecked and is saved for the current Profile's selected model; changing the model or Provider clears the choice. Explicit model declarations, including an empty tools list, remain authoritative. Native tool calls, global Web Tools settings, and the Profile's routing and off switches still apply. Turn it off if your Messages endpoint rejects it.
+
+With a custom base URL enabled, **Fixed rate** edits one set of prices without an **Add Pricing Tier** button. To add tiers, select **By context size**, or a tiered rate inside **By time of day**. Capability checkboxes and the capability summary follow the current model and explicit Profile overrides.
+
 ## Tips
 
 - **Prompt caching:** Claude models support [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching), which can significantly reduce cost and latency for repeated requests.

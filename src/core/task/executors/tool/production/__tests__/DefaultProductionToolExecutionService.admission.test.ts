@@ -343,4 +343,30 @@ describe("production admission rejection", () => {
             }),
         ])
     })
+
+    it("withdraws an unsettled partial preview card on model-only admission rejection", async () => {
+        const removeMessagesByTs = vi.fn(async () => {})
+        const postStateToWebview = vi.fn(async () => {})
+        const partialPreview: UiMessage = {
+            ts: INVOCATION.presentationId,
+            type: "say",
+            say: "use_mcp_server",
+            text: "{}",
+            partial: true,
+        }
+        const harness = subject({
+            messageState: { clineMessages: [partialPreview], removeMessagesByTs } as never,
+            callbacks: { say: vi.fn(async () => undefined), postStateToWebview } as never,
+        })
+
+        const result = await harness.execute({
+            ...INVOCATION,
+            toolName: DlineDefaultTool.MCP_USE,
+            input: { tool_name: "probe" },
+        })
+
+        expect(result.failed).toBe(true)
+        expect(removeMessagesByTs).toHaveBeenCalledWith([INVOCATION.presentationId])
+        expect(postStateToWebview).toHaveBeenCalledOnce()
+    })
 })

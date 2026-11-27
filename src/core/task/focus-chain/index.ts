@@ -75,6 +75,15 @@ export interface FocusChainDependencies {
      * observer must stay distinguishable from one that saw no changes.
      */
     observeChecklist?: (changes: readonly ChecklistChange[]) => void
+    /**
+     * Notified whenever this task's canonical checklist changed, after the new
+     * value is durable and published. Consumers that derive their own presentation
+     * from the checklist — the editor tab title, for one — listen here instead of
+     * relying on each caller to remember them. A caller that replaces the plan
+     * without going through a `task_progress` report would otherwise leave those
+     * consumers showing the previous list indefinitely.
+     */
+    onChecklistChanged?: () => void
 }
 
 export class FocusChainManager {
@@ -103,6 +112,7 @@ export class FocusChainManager {
     private completedRequests: number | undefined
     private lastRequestId: string | undefined
     private readonly requestsSinceProgress?: () => number
+    private readonly onChecklistChanged?: () => void
 
     constructor(dependencies: FocusChainDependencies) {
         this.taskId = dependencies.taskId
@@ -114,6 +124,7 @@ export class FocusChainManager {
         this.focusChainSettings = dependencies.focusChainSettings
         this.observeUsageChecklist = dependencies.observeChecklist
         this.requestsSinceProgress = dependencies.requestsSinceProgress
+        this.onChecklistChanged = dependencies.onChecklistChanged
     }
 
     /**
@@ -204,6 +215,7 @@ export class FocusChainManager {
                 else if (!previous || !isAllItemsCompleted(previous)) this.completedRequests = 0
                 this.taskState.todoListWasUpdatedByUser = true
                 await this.postStateToWebview()
+                this.notifyChecklistChanged()
                 telemetryService.captureFocusChainListWritten(this.taskId)
             }).catch((error: unknown) => Logger.error(`[Task ${this.taskId}] Failed to load external checklist edit:`, error))
         }, 300)
@@ -497,6 +509,7 @@ export class FocusChainManager {
             Logger.warn(`[Task ${this.taskId}] Failed to publish checklist row:`, error)
         }
         await this.publishState()
+        this.notifyChecklistChanged()
         if (decision.warnSkip) await this.say("error", FocusChainDiagnostics.skipOrderWarning)
         return { kind: "applied" }
     }
@@ -506,6 +519,20 @@ export class FocusChainManager {
             await this.postStateToWebview()
         } catch (error) {
             Logger.warn(`[Task ${this.taskId}] Failed to publish checklist state:`, error)
+        }
+    }
+
+    /**
+     * Tell derived presentations that the canonical checklist changed.
+     *
+     * Presentation failures never fail the checklist update: the change is already
+     * durable, and a missing tab title must not claim the commit was lost.
+     */
+    private notifyChecklistChanged(): void {
+        try {
+            this.onChecklistChanged?.()
+        } catch (error) {
+            Logger.warn(`[Task ${this.taskId}] Checklist change listener failed:`, error)
         }
     }
 

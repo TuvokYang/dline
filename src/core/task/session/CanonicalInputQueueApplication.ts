@@ -35,6 +35,7 @@ export const QUEUE_COMMAND_PERFORMED = "command_performed"
 function refusalOf(mutation: CanonicalInputQueueMutation, reason: RejectReason | RuntimeRejection["reason"]): string {
     if (reason === "read_only") return "task_read_only"
     if (reason === "capacity_exceeded") return "queue_full"
+    if (reason === "generation_mismatch") return "stale_generation"
     if (mutation.kind === "enqueue" && reason === "phase_invalid") return "input_held"
     return "missing_entry"
 }
@@ -130,7 +131,18 @@ export class CanonicalInputQueueApplication implements InputQueueApplicationPort
                 break
         }
 
-        const submitted = await this.runtime.submit(event)
+        let currentEvent = event
+        let submitted = await this.runtime.submit(currentEvent)
+        for (
+            let attempt = 0;
+            attempt < 2 && submitted.kind === "rejected" && submitted.reason === "generation_mismatch";
+            attempt++
+        ) {
+            const latestGeneration = this.runtime.getState().generation
+            if (latestGeneration === currentEvent.generation) break
+            currentEvent = { ...currentEvent, generation: latestGeneration }
+            submitted = await this.runtime.submit(currentEvent)
+        }
         if (submitted.kind === "rejected") {
             return { accepted: false, result: refusalOf(mutation, submitted.reason) }
         }

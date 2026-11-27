@@ -1,5 +1,6 @@
 import type { ModelInfo } from "@shared/proto/dline/models"
 import type { ThinkingConfig } from "@shared/proto/dline/models/metadata"
+import { OPENAI_COMPATIBLE_REASONING_EFFORT_OPTIONS } from "@shared/storage/types"
 import { mergeDefined } from "./effective-model-info"
 import { inheritModelInfo } from "./model-inheritance"
 
@@ -12,7 +13,7 @@ function compatibleThinking(thinking: ThinkingConfig | undefined): ThinkingConfi
         {
             supported: true,
             mode: "effort",
-            effortLevels: ["none", "low", "medium", "high"],
+            effortLevels: [...OPENAI_COMPATIBLE_REASONING_EFFORT_OPTIONS],
             defaultEnabled: true,
             canDisable: true,
         },

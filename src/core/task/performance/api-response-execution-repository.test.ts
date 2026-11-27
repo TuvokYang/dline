@@ -126,4 +126,23 @@ describe("TaskApiResponseExecutionRepository", () => {
         await expect(repository.readRecent()).rejects.toThrow()
         await expect(repository.close()).resolves.toBeUndefined()
     })
+
+    it("returns the newest canonical executions from a large history without scanning every row", async () => {
+        const location = path.join(root, "large-recent.db")
+        const repository = new TaskApiResponseExecutionRepository({ taskId: "task-a", location })
+        repositories.push(repository)
+        const records: ApiResponseExecutionRecord[] = []
+        for (let index = 0; index < 2_500; index++) {
+            const executionId = `task-a:request-a:provider:${index.toString().padStart(5, "0")}`
+            const completedAtMs = 10_000 + index
+            records.push(execution(executionId, 0, completedAtMs))
+            if (index >= 2_490) records.push(execution(executionId, 1, completedAtMs))
+        }
+        await repository.append(records)
+
+        const recent = await repository.readRecent(10)
+        expect(recent).toHaveLength(10)
+        expect(recent[0]).toMatchObject({ executionId: "task-a:request-a:provider:02490", revision: 1 })
+        expect(recent.at(-1)).toMatchObject({ executionId: "task-a:request-a:provider:02499", revision: 1 })
+    })
 })
