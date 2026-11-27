@@ -158,7 +158,6 @@ export const en = {
     "settings.ui.dify.modelHelp": "The model selection is handled within your Dify application configuration.",
     "settings.ui.asksage.enterUrl": "Enter AskSage API URL...",
     "settings.ui.oca.baseUrl": "OCA Base URL",
-    "settings.ui.codex.websocket": "Use WebSocket transport",
     "settings.ui.deepseek.protocolHelp":
         "DeepSeek serves every model through each protocol; the choice changes the wire format, not the price.",
     "settings.ui.loading": "Loading...",

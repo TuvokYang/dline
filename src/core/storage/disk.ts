@@ -555,8 +555,7 @@ function isKnownApiFormat(value: unknown): value is ApiFormat {
         value === ApiFormat.GEMINI_CHAT ||
         value === ApiFormat.OPENAI_CHAT ||
         value === ApiFormat.R1_CHAT ||
-        value === ApiFormat.OPENAI_RESPONSES ||
-        value === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
+        value === ApiFormat.OPENAI_RESPONSES
     )
 }
 

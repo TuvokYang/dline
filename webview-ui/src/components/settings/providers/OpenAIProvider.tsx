@@ -132,7 +132,8 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
     const hostedWebSearchAvailable =
         modelInfo.capabilities?.tools?.includes(ServerTool.WEB_SEARCH) === true &&
         isServerToolEnabled(ServerTool.WEB_SEARCH, pc.disabledServerTools) &&
-        (selectedApiFormat === ApiFormat.OPENAI_RESPONSES || selectedApiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE)
+        selectedApiFormat === ApiFormat.OPENAI_RESPONSES
+    const websocketEnabled = selectedApiFormat === ApiFormat.OPENAI_RESPONSES && pc.websocketEnabled === true
     const thinking = modelInfo.capabilities?.thinking
     const thinkingSupported = thinking?.supported === true && modelInfo.capabilities?.supportsReasoning !== false
     const effortSupported = thinkingSupported && thinking?.mode === "effort"
@@ -221,13 +222,16 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
     const handleModelChange = (nextModelId: string) => {
         const nextModel = models[nextModelId]
         const nextFormats = nextModel?.apiFormats ?? CUSTOM_OPENAI_API_FORMATS
+        const nextApiFormat = resolveApiFormat(selectedApiFormat, { apiFormats: nextFormats }, ApiFormat.OPENAI_CHAT)
+        const current = configToUpdate()
         onUpdate({
             modelId: nextModelId,
             modelInfo: undefined,
             openai: {
-                ...configToUpdate(),
+                ...current,
                 apiEndpoint: undefined,
-                apiFormat: resolveApiFormat(selectedApiFormat, { apiFormats: nextFormats }, ApiFormat.OPENAI_CHAT),
+                apiFormat: nextApiFormat,
+                ...(nextApiFormat === ApiFormat.OPENAI_RESPONSES ? {} : { websocketEnabled: false }),
             },
         })
     }
@@ -292,9 +296,35 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
                     <ApiFormatSelector
                         apiFormats={apiFormats}
                         fallbackApiFormat={ApiFormat.OPENAI_CHAT}
-                        onChange={(apiFormat) => onUpdate({ openai: { ...configToUpdate(), apiEndpoint: undefined, apiFormat } })}
+                        onChange={(apiFormat) =>
+                            onUpdate({
+                                openai: {
+                                    ...configToUpdate(),
+                                    apiEndpoint: undefined,
+                                    apiFormat,
+                                    ...(apiFormat === ApiFormat.OPENAI_RESPONSES ? {} : { websocketEnabled: false }),
+                                },
+                            })
+                        }
                         selectedApiFormat={selectedApiFormat}
                     />
+
+                    {selectedApiFormat === ApiFormat.OPENAI_RESPONSES ? (
+                        <VSCodeCheckbox
+                            checked={websocketEnabled}
+                            onChange={(event: Event | React.FormEvent<HTMLElement>) =>
+                                onUpdate({
+                                    openai: {
+                                        ...configToUpdate(),
+                                        apiEndpoint: undefined,
+                                        apiFormat: ApiFormat.OPENAI_RESPONSES,
+                                        websocketEnabled: (event.target as HTMLInputElement | null)?.checked === true,
+                                    },
+                                })
+                            }>
+                            {t("settings.ui.useWebsocket")}
+                        </VSCodeCheckbox>
+                    ) : null}
 
                     <ProviderWebToolsSettings
                         hostedAvailable={hostedWebSearchAvailable}

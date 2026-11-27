@@ -13,7 +13,6 @@ const KNOWN_SERVER_TOOLS = new Set<ServerTool>([
 const SUPPORTED_TOOLS_BY_API_FORMAT: Readonly<Partial<Record<ApiFormat, ReadonlySet<ServerTool>>>> = {
     [ApiFormat.ANTHROPIC_CHAT]: new Set([ServerTool.WEB_SEARCH, ServerTool.CODE_EXECUTION, ServerTool.WEB_FETCH]),
     [ApiFormat.OPENAI_RESPONSES]: new Set([ServerTool.WEB_SEARCH, ServerTool.IMAGE_GENERATION]),
-    [ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE]: new Set([ServerTool.WEB_SEARCH, ServerTool.IMAGE_GENERATION]),
 }
 
 export type ServerToolDeclaration =
@@ -385,7 +384,6 @@ export function projectServerTools(plan: WebSearchRoutingPlan): ServerToolProjec
 
     switch (plan.serverToolPlan.apiFormat) {
         case ApiFormat.OPENAI_RESPONSES:
-        case ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE:
             if (hosted.has(ServerTool.WEB_SEARCH)) declarations.push({ type: "web_search" })
             break
         case ApiFormat.ANTHROPIC_CHAT:

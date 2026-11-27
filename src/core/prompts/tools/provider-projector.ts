@@ -179,7 +179,6 @@ function projectByApiFormat(
             return toGoogle(spec, context, enabledToolIds)
         case ApiFormat.OPENAI_CHAT:
         case ApiFormat.OPENAI_RESPONSES:
-        case ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE:
         case ApiFormat.R1_CHAT:
             return toOpenAI(spec, context, enabledToolIds)
         default:

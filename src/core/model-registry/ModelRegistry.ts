@@ -5,7 +5,7 @@
  * caches them in memory, and watches for file changes.
  */
 import { getDlineHomePath } from "@core/storage/disk"
-import { ServerTool, serverToolFromJSON } from "@shared/proto/dline/models/metadata"
+import { ApiFormat, apiFormatFromJSON, ServerTool, serverToolFromJSON } from "@shared/proto/dline/models/metadata"
 import { getProviderCatalog, getProviderCatalogKeys, getProviderSeedConfig } from "@shared/providers/model-infos"
 import { migrateModelPricing } from "@shared/providers/pricing-shape"
 import { resolvePrimaryCatalogKey } from "@shared/providers/provider-catalog-key"
@@ -50,6 +50,21 @@ function parseProviderModelsConfig(providerId: string, raw: string): ProviderMod
         throw new Error(`Provider config "${providerId}" must define models as a keyed object`)
     }
     for (const model of Object.values(config.models)) {
+        if (Array.isArray(model.apiFormats)) {
+            const normalizedFormats: ApiFormat[] = []
+            for (const rawFormat of model.apiFormats as unknown[]) {
+                const format =
+                    rawFormat === "OPENAI_RESPONSES_WEBSOCKET_MODE" || rawFormat === 5
+                        ? ApiFormat.OPENAI_RESPONSES
+                        : typeof rawFormat === "string"
+                          ? apiFormatFromJSON(rawFormat)
+                          : (rawFormat as ApiFormat)
+                if (format !== ApiFormat.UNRECOGNIZED && !normalizedFormats.includes(format)) {
+                    normalizedFormats.push(format)
+                }
+            }
+            model.apiFormats = normalizedFormats
+        }
         const capabilities = model.capabilities
         if (!capabilities || !Array.isArray(capabilities.tools)) continue
         capabilities.tools = capabilities.tools

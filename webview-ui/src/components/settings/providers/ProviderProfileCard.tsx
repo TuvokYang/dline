@@ -118,8 +118,7 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
     const catalogModelInfo = models[profile.modelId]
     const selectedModelInfo = resolveProfileModelInfo(profile, currentCatalog)
     const selectedApiFormat = profile.openai?.apiFormat ?? profile.modelInfo?.apiFormats?.[0] ?? catalogModelInfo?.apiFormats?.[0]
-    const supportsResponses =
-        selectedApiFormat === ApiFormat.OPENAI_RESPONSES || selectedApiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
+    const supportsResponses = selectedApiFormat === ApiFormat.OPENAI_RESPONSES
     const hasCurrentImageCatalog =
         Object.keys(currentCatalog.imageModels).length > 0 && Boolean(currentCatalog.defaultImageModelId)
     const supportsGptSubscription =

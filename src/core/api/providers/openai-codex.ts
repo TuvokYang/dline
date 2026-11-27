@@ -330,8 +330,7 @@ export class OpenAiCodexHandler extends ApiHandler {
     }
 
     private usesResponsesApi(): boolean {
-        const apiFormat = this.getModel().info.apiFormats?.[0]
-        return apiFormat === ApiFormat.OPENAI_RESPONSES || apiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
+        return this.getSelectedApiFormat() === ApiFormat.OPENAI_RESPONSES
     }
 
     /** Keep the account quota snapshot current through the shared polling policy. */
@@ -526,8 +525,8 @@ export class OpenAiCodexHandler extends ApiHandler {
         }
     }
 
-    private shouldUseWebsocketMode(apiFormat?: ApiFormat): boolean {
-        return apiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
+    private shouldUseWebsocketMode(apiFormat: ApiFormat = this.getSelectedApiFormat()): boolean {
+        return apiFormat === ApiFormat.OPENAI_RESPONSES && this.config?.websocketEnabled === true
     }
 
     private buildRequestBody(

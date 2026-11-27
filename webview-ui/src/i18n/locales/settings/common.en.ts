@@ -28,6 +28,7 @@ export const en = {
     "settings.ui.example": ({ value }: { value: string }) => `e.g. ${value}`,
     "settings.ui.managed": "This setting is managed by your organization's remote configuration",
     "settings.ui.apiFormat": "API Format",
+    "settings.ui.useWebsocket": "Use WebSocket transport",
     "settings.ui.default": "Default",
     "settings.ui.providerDefault": "Provider default",
     "settings.ui.options": "Options",

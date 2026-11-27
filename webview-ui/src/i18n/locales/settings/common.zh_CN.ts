@@ -30,6 +30,7 @@ export const zhCN = {
     "settings.ui.example": ({ value }) => `例如：${value}`,
     "settings.ui.managed": "此设置由你所在组织的远程配置管理",
     "settings.ui.apiFormat": "API 格式",
+    "settings.ui.useWebsocket": "使用 WebSocket 传输",
     "settings.ui.default": "默认",
     "settings.ui.providerDefault": "提供商默认值",
     "settings.ui.options": "选项",

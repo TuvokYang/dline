@@ -870,7 +870,6 @@ export class SubagentRunner {
             const apiFormat = providerInfo.model.info.apiFormats?.[0]
             const nativeToolCallsRequested =
                 apiFormat === ApiFormat.OPENAI_RESPONSES ||
-                apiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE ||
                 !!this.baseConfig.services.stateManager.getGlobalStateKey("nativeToolCallEnabled")
             const useNativeToolCalls = isNativeToolCallingConfig(providerInfo, nativeToolCallsRequested)
             const webSearchRoutingPlan = this.resolveAllowedWebRoutingPlan(api, webToolsEnabled, useNativeToolCalls)

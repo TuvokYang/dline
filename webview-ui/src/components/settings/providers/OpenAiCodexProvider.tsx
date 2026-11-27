@@ -69,16 +69,9 @@ export const OpenAiCodexProvider = ({ showModelOptions, isPopup, profile, onUpda
     const compatibilityThinking =
         declaredModel.capabilities?.thinking === undefined && pc.capabilities?.thinking === undefined && effortSupported
     const supportedApiFormats = baseModel?.apiFormats ?? modelInfoSaneDefaults.apiFormats ?? [ApiFormat.OPENAI_RESPONSES]
-    const baseApiFormats = supportedApiFormats.filter((apiFormat) => apiFormat !== ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE)
-    const apiFormats = baseApiFormats.length > 0 ? baseApiFormats : [ApiFormat.OPENAI_RESPONSES]
-    const legacyWebsocketEnabled = pc.apiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
-    const selectedApiFormat = resolveApiFormat(
-        legacyWebsocketEnabled ? ApiFormat.OPENAI_RESPONSES : pc.apiFormat,
-        { apiFormats },
-        ApiFormat.OPENAI_RESPONSES,
-    )
-    const websocketSupported = supportedApiFormats.includes(ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE)
-    const websocketEnabled = websocketSupported && (pc.websocketEnabled ?? legacyWebsocketEnabled)
+    const apiFormats = supportedApiFormats.length > 0 ? supportedApiFormats : [ApiFormat.OPENAI_RESPONSES]
+    const selectedApiFormat = resolveApiFormat(pc.apiFormat, { apiFormats }, ApiFormat.OPENAI_RESPONSES)
+    const websocketEnabled = selectedApiFormat === ApiFormat.OPENAI_RESPONSES && pc.websocketEnabled === true
     const handleCapabilitiesUpdate = (updates: Partial<ModelCapabilities>) => {
         onUpdate({ openaiCodex: { ...pc, capabilities: mergeCapabilities(pc.capabilities, updates) } })
     }
@@ -113,7 +106,7 @@ export const OpenAiCodexProvider = ({ showModelOptions, isPopup, profile, onUpda
                         selectedApiFormat={selectedApiFormat}
                         showSingleOption
                     />
-                    {websocketSupported && selectedApiFormat === ApiFormat.OPENAI_RESPONSES ? (
+                    {selectedApiFormat === ApiFormat.OPENAI_RESPONSES ? (
                         <VSCodeCheckbox
                             checked={websocketEnabled}
                             onChange={(event) =>
@@ -125,7 +118,7 @@ export const OpenAiCodexProvider = ({ showModelOptions, isPopup, profile, onUpda
                                     },
                                 })
                             }>
-                            {t("settings.ui.codex.websocket")}
+                            {t("settings.ui.useWebsocket")}
                         </VSCodeCheckbox>
                     ) : null}
                     {(effortSupported || budgetSupported) && (

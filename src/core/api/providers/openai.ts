@@ -17,6 +17,8 @@ import { normalizeOpenAIResponsesStreamIdleTimeoutSeconds } from "@shared/provid
 import { normalizeOpenAiServiceTier } from "@shared/storage/types"
 import OpenAI from "openai"
 import type { ChatCompletionChunk, ChatCompletionFunctionTool, ChatCompletionTool } from "openai/resources/chat/completions"
+import { WebSocket as UndiciWebSocket } from "undici"
+import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import type { DocumentInputLimits } from "@/shared/messages/attached-documents"
 import { ClineStorageMessage, type HostedToolReplayProtocol } from "@/shared/messages/content"
 import { isO1Model } from "@/shared/resolve-prompt-profile"
@@ -24,14 +26,16 @@ import { Logger } from "@/shared/services/Logger"
 import { ApiHandler, ApiHandlerContext, type ApiRequestOptions } from "../ApiHandler"
 import { openAiResponsesDocumentLimits } from "../document-input-limits"
 import { withRetry } from "../retry"
-import { getOpenAIChatOutputLimitError } from "../stream/OutputLimitExceededError"
+import { getOpenAIChatOutputLimitError, isOutputLimitExceededError } from "../stream/OutputLimitExceededError"
 import { OpenAIResponsesStreamMonitor } from "../stream/openai-responses-stream-monitor"
 import { convertToO1Messages } from "../transform/o1-format"
 import { convertToOpenAiMessages } from "../transform/openai-format"
 import {
     type OpenAIPromptCacheProjectionMode,
+    type OpenAIResponsesSystemPromptPlacement,
     projectOpenAIChatPromptCache,
     projectOpenAIResponsesPromptCache,
+    usesResponsesDeveloperSystemPrompt,
 } from "../transform/openai-prompt-cache"
 import { convertToOpenAIResponsesInput, declaredResponsesHostedToolNames } from "../transform/openai-response-format"
 import { convertToR1Format } from "../transform/r1-format"
@@ -39,6 +43,14 @@ import { normalizeOpenAIFinishReason } from "../transform/stop-reason"
 import { ApiStream } from "../transform/stream"
 import { getOpenAIToolParams, ToolCallProcessor } from "../transform/tool-call-processor"
 import { chatReasoningTokens } from "../transform/usage-normalization"
+import {
+    OPENAI_RESPONSES_WEBSOCKET_BETA_HEADER,
+    openOpenAIResponsesWebsocket,
+    type ResponsesWebsocketError,
+    resolveOpenAIResponsesWebsocketUrl,
+    shouldRetryOpenAIResponsesWebsocketWithFullContext,
+    streamOpenAIResponsesWebsocketEvents,
+} from "../utils/openai-responses-websocket"
 import { handleResponsesApiStreamResponse } from "../utils/responses_api_support"
 import { encodeOpenAIChatReasoning, encodeOpenAIResponsesReasoning, resolveOpenAIReasoning } from "./openai/reasoning"
 import { createOpenAIClientForProfile } from "./openai-client-factory"
@@ -77,6 +89,10 @@ function isUnsupportedPromptCacheControlError(error: unknown): boolean {
 export class OpenAiHandler extends ApiHandler {
     private client: OpenAI | undefined
     private requestController: AbortController | undefined
+    private responsesWs: UndiciWebSocket | undefined
+    private responsesWsKey: string | undefined
+    /** The request holding the single websocket slot; each request releases only its own claim. */
+    private websocketRequestOwner: AbortSignal | undefined
     private explicitPromptCacheRejected = false
     private latestOrdinaryResponsesDiagnostic?: CompactionWireDiagnosticSnapshot
 
@@ -196,7 +212,88 @@ export class OpenAiHandler extends ApiHandler {
     }
 
     private usesResponsesApi(): boolean {
-        return this.apiFormat === ApiFormat.OPENAI_RESPONSES || this.apiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
+        return this.apiFormat === ApiFormat.OPENAI_RESPONSES
+    }
+
+    private usesAzureEndpoint(): boolean {
+        const lowerBaseUrl = (this.baseUrl ?? "").toLowerCase()
+        const isAzureDomain = lowerBaseUrl.includes("azure.com") || lowerBaseUrl.includes("azure.us")
+        return Boolean(this.azureApiVersion) || (isAzureDomain && !this.modelId.toLowerCase().includes("deepseek"))
+    }
+
+    private shouldUseWebsocketMode(): boolean {
+        if (!this.usesResponsesApi() || this.config?.websocketEnabled !== true) return false
+        // Azure AD identity obtains short-lived tokens inside the AzureOpenAI SDK transport.
+        if (this.usesAzureEndpoint() && this.azureIdentity) return false
+        return true
+    }
+
+    private buildWebsocketHeaders(): Record<string, string> {
+        const useAzure = this.usesAzureEndpoint()
+        return {
+            ...(this.apiKey ? (useAzure ? { "api-key": this.apiKey } : { Authorization: `Bearer ${this.apiKey}` }) : {}),
+            "OpenAI-Beta": OPENAI_RESPONSES_WEBSOCKET_BETA_HEADER,
+            ...buildExternalBasicHeaders(),
+            ...this.openAiHeaders,
+            ...this.routingHeaders,
+        }
+    }
+
+    private async ensureResponsesWebsocket(
+        url: string,
+        headers: Record<string, string>,
+        signal: AbortSignal,
+    ): Promise<UndiciWebSocket> {
+        const connectionKey = JSON.stringify({ url, headers })
+        if (this.responsesWs && this.responsesWs.readyState === UndiciWebSocket.OPEN && this.responsesWsKey === connectionKey) {
+            return this.responsesWs
+        }
+        this.closeResponsesWebsocket()
+        const ws = await openOpenAIResponsesWebsocket(url, headers, signal, "OpenAI")
+        this.responsesWs = ws
+        this.responsesWsKey = connectionKey
+        return ws
+    }
+
+    private closeResponsesWebsocket(): void {
+        if (this.responsesWs) {
+            try {
+                this.responsesWs.close()
+            } catch {}
+            this.responsesWs = undefined
+            this.responsesWsKey = undefined
+        }
+    }
+
+    private async createResponseEventsViaWebsocket(
+        params: OpenAI.Responses.ResponseCreateParamsStreaming,
+        signal: AbortSignal,
+    ): Promise<{ stream: AsyncIterable<OpenAI.Responses.ResponseStreamEvent>; sentAtMs: number; release: () => void }> {
+        if (this.websocketRequestOwner) {
+            const error: ResponsesWebsocketError = new Error("Websocket response.create is already in progress")
+            error.code = "websocket_concurrency_limit"
+            throw error
+        }
+        this.websocketRequestOwner = signal
+        const release = () => {
+            if (this.websocketRequestOwner === signal) this.websocketRequestOwner = undefined
+        }
+        try {
+            const url = resolveOpenAIResponsesWebsocketUrl(this.baseUrl)
+            const headers = this.buildWebsocketHeaders()
+            const ws = await this.ensureResponsesWebsocket(url, headers, signal)
+            const opened = await streamOpenAIResponsesWebsocketEvents({
+                ws,
+                providerId: "openai",
+                label: "OpenAI",
+                params,
+                signal,
+            })
+            return { ...opened, release }
+        } catch (error) {
+            release()
+            throw error
+        }
     }
 
     /**
@@ -466,14 +563,22 @@ export class OpenAiHandler extends ApiHandler {
         tools?: ChatCompletionTool[],
         options?: ApiRequestOptions,
     ): ApiStream {
-        const client = this.ensureClient()
         const model = this.getModel()
+        const useWebsocketMode = this.shouldUseWebsocketMode()
+        const replayHostedTools = declaredResponsesHostedToolNames(options?.serverTools)
         const converted = convertToOpenAIResponsesInput(messages, {
-            usePreviousResponseId: false,
-            replayHostedTools: declaredResponsesHostedToolNames(options?.serverTools),
+            usePreviousResponseId: useWebsocketMode,
+            replayHostedTools,
         })
+        const primaryInput = converted.input
+        const previousResponseId = converted.previousResponseId
+        const fullInput = previousResponseId
+            ? convertToOpenAIResponsesInput(messages, {
+                  usePreviousResponseId: false,
+                  replayHostedTools,
+              }).input
+            : primaryInput
         const hostedWebSearch = options?.serverTools?.includes(ServerTool.WEB_SEARCH) === true
-        const input = converted.input
         const responseTools: OpenAI.Responses.Tool[] = (tools ?? [])
             .filter((tool): tool is ChatCompletionFunctionTool => tool.type === "function")
             .filter((tool) => !hostedWebSearch || tool.function.name !== "web_search")
@@ -490,28 +595,37 @@ export class OpenAiHandler extends ApiHandler {
         const reasoning = encodeOpenAIResponsesReasoning(model.info.capabilities, this.config?.reasoning)
         const reasoningEnabled = reasoning !== undefined && reasoning.effort !== "none"
         const temperature = model.info.capabilities?.temperature ?? this.config?.temperature
-        const buildParams = (mode: OpenAIPromptCacheProjectionMode): OpenAI.Responses.ResponseCreateParamsStreaming => {
+        const buildParams = (
+            mode: OpenAIPromptCacheProjectionMode,
+            targetInput: OpenAI.Responses.ResponseInput,
+            chainPreviousResponseId: string | undefined,
+            recordDiagnostic: boolean,
+        ): OpenAI.Responses.ResponseCreateParamsStreaming => {
+            const systemPromptPlacement: OpenAIResponsesSystemPromptPlacement | undefined =
+                chainPreviousResponseId && (mode === "explicit" || usesResponsesDeveloperSystemPrompt(model.id))
+                    ? "inherited"
+                    : undefined
             const promptCache = projectOpenAIResponsesPromptCache({
                 modelId: model.id,
                 systemPrompt,
-                input,
+                input: targetInput,
                 tools: responseTools,
                 taskNamespace: options?.taskNamespace,
                 mode,
-                ...(this.apiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
-                    ? { systemPromptPlacement: "instructions" as const }
-                    : {}),
+                ...(systemPromptPlacement ? { systemPromptPlacement } : {}),
             })
-            this.recordResponsesCompactionDiagnostic({
-                requestKind: options?.generation?.purpose === "compaction" ? "compaction" : "ordinary",
-                modelId: model.id,
-                mode,
-                taskNamespace: options?.taskNamespace,
-                promptCacheKey: promptCache.promptCacheKey,
-                instructions: promptCache.instructions,
-                tools: responseTools,
-                wireInput: promptCache.input,
-            })
+            if (recordDiagnostic) {
+                this.recordResponsesCompactionDiagnostic({
+                    requestKind: options?.generation?.purpose === "compaction" ? "compaction" : "ordinary",
+                    modelId: model.id,
+                    mode,
+                    taskNamespace: options?.taskNamespace,
+                    promptCacheKey: promptCache.promptCacheKey,
+                    instructions: promptCache.instructions,
+                    tools: responseTools,
+                    wireInput: promptCache.input,
+                })
+            }
             return {
                 model: model.id,
                 ...(promptCache.instructions === undefined ? {} : { instructions: promptCache.instructions }),
@@ -520,6 +634,7 @@ export class OpenAiHandler extends ApiHandler {
                 ...(promptCache.promptCacheOptions ? { prompt_cache_options: promptCache.promptCacheOptions } : {}),
                 stream: true,
                 store: false,
+                ...(chainPreviousResponseId ? { previous_response_id: chainPreviousResponseId } : {}),
                 ...(responseTools?.length ? { tools: responseTools } : {}),
                 ...(hostedWebSearch
                     ? { include: ["web_search_call.results" as const, "web_search_call.action.sources" as const] }
@@ -530,21 +645,103 @@ export class OpenAiHandler extends ApiHandler {
             }
         }
 
-        const { stream, sentAtMs } = await this.createWithPromptCacheFallback(this.promptCacheProjectionMode, (mode) =>
-            this.createResponsesStream(client, buildParams(mode), requestController.signal),
-        )
         const idleTimeoutSeconds = normalizeOpenAIResponsesStreamIdleTimeoutSeconds(this.config?.streamIdleTimeoutSeconds)
-        const monitor = new OpenAIResponsesStreamMonitor({
-            idleTimeoutMs: idleTimeoutSeconds * 1_000,
-            abort: () => requestController.abort(),
-            log: (message) => Logger.debug(message),
-            requestLabel: this.ctx.ulid ? `Task ${this.ctx.ulid}` : "OpenAI",
-            onEstimatedTokens: this.ctx.onStreamEstimatedTokens,
-        })
-        yield* handleResponsesApiStreamResponse(monitor.observe(stream), model.info, sentAtMs)
+        const createMonitor = () =>
+            new OpenAIResponsesStreamMonitor({
+                idleTimeoutMs: idleTimeoutSeconds * 1_000,
+                abort: () => requestController.abort(),
+                log: (message) => Logger.debug(message),
+                requestLabel: this.ctx.ulid ? `Task ${this.ctx.ulid}` : "OpenAI",
+                onEstimatedTokens: this.ctx.onStreamEstimatedTokens,
+            })
+
+        if (useWebsocketMode) {
+            const runWebsocket = async function* (handler: OpenAiHandler, mode: OpenAIPromptCacheProjectionMode): ApiStream {
+                const primaryParams = buildParams(mode, primaryInput, previousResponseId, true)
+                const fallbackParams = buildParams(mode, fullInput, undefined, false)
+                let emitted = false
+                const streamOne = async function* (params: OpenAI.Responses.ResponseCreateParamsStreaming): ApiStream {
+                    const { stream, sentAtMs, release } = await handler.createResponseEventsViaWebsocket(
+                        params,
+                        requestController.signal,
+                    )
+                    try {
+                        for await (const chunk of handleResponsesApiStreamResponse(
+                            createMonitor().observe(stream),
+                            model.info,
+                            sentAtMs,
+                        )) {
+                            emitted = true
+                            yield chunk
+                        }
+                    } finally {
+                        release()
+                    }
+                }
+                try {
+                    yield* streamOne(primaryParams)
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error)
+                    if (
+                        !requestController.signal.aborted &&
+                        !emitted &&
+                        shouldRetryOpenAIResponsesWebsocketWithFullContext(error, !!primaryParams.previous_response_id, message)
+                    ) {
+                        Logger.log(
+                            "Retrying OpenAI websocket response with full context after previous_response_not_found or socket reset",
+                        )
+                        handler.closeResponsesWebsocket()
+                        yield* streamOne(fallbackParams)
+                        return
+                    }
+                    throw error
+                }
+            }
+
+            let emitted = false
+            try {
+                const initialMode = this.promptCacheProjectionMode
+                try {
+                    for await (const chunk of runWebsocket(this, initialMode)) {
+                        emitted = true
+                        yield chunk
+                    }
+                    return
+                } catch (error) {
+                    if (initialMode === "explicit" && !emitted && isUnsupportedPromptCacheControlError(error)) {
+                        this.explicitPromptCacheRejected = true
+                        Logger.warn("[OpenAI] Explicit prompt cache controls were rejected; retrying with automatic caching")
+                        for await (const chunk of runWebsocket(this, "automatic")) {
+                            emitted = true
+                            yield chunk
+                        }
+                        return
+                    }
+                    throw error
+                }
+            } catch (error) {
+                if (requestController.signal.aborted || emitted || isOutputLimitExceededError(error)) {
+                    throw error
+                }
+                const message = error instanceof Error ? error.message : String(error)
+                Logger.error(`OpenAI websocket mode failed; falling back to HTTP Responses API (${message}).`)
+                this.closeResponsesWebsocket()
+            }
+        }
+
+        const client = this.ensureClient()
+        const { stream, sentAtMs } = await this.createWithPromptCacheFallback(this.promptCacheProjectionMode, (mode) =>
+            this.createResponsesStream(
+                client,
+                buildParams(mode, fullInput, undefined, !useWebsocketMode),
+                requestController.signal,
+            ),
+        )
+        yield* handleResponsesApiStreamResponse(createMonitor().observe(stream), model.info, sentAtMs)
     }
 
     override abort(): void {
+        this.closeResponsesWebsocket()
         this.requestController?.abort()
     }
 

@@ -323,7 +323,7 @@ describe("OpenAiCodexHandler hosted Web Search", () => {
 
         expect(model.info.capabilities?.contextWindow).to.equal(400_000)
         expect(model.info.capabilities?.maxTokens).to.equal(64_000)
-        expect(model.info.apiFormats?.[0]).to.equal(ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE)
+        expect(model.info.apiFormats?.[0]).to.equal(ApiFormat.OPENAI_RESPONSES)
         expect((handler as any).shouldUseWebsocketMode(model.info.apiFormats?.[0])).to.equal(true)
     })
 
@@ -1057,7 +1057,11 @@ describe("OpenAiCodexHandler hosted Web Search", () => {
                 modelId: "gpt-6.2-astra",
                 modelInfo: {
                     id: "gpt-6.2-astra",
-                    apiFormats: [ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE],
+                    apiFormats: [ApiFormat.OPENAI_RESPONSES],
+                },
+                openaiCodex: {
+                    apiFormat: ApiFormat.OPENAI_RESPONSES,
+                    websocketEnabled: true,
                 },
             }),
             mode: "act",
@@ -1133,7 +1137,11 @@ describe("OpenAiCodexHandler hosted Web Search", () => {
                 modelId: "gpt-5.6-sol",
                 modelInfo: {
                     id: "gpt-5.6-sol",
-                    apiFormats: [ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE],
+                    apiFormats: [ApiFormat.OPENAI_RESPONSES],
+                },
+                openaiCodex: {
+                    apiFormat: ApiFormat.OPENAI_RESPONSES,
+                    websocketEnabled: true,
                 },
             }),
             mode: "act",
@@ -1267,7 +1275,11 @@ describe("OpenAiCodexHandler hosted Web Search", () => {
                 modelId: "gpt-6.2-sol",
                 modelInfo: {
                     id: "gpt-6.2-sol",
-                    apiFormats: [ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE],
+                    apiFormats: [ApiFormat.OPENAI_RESPONSES],
+                },
+                openaiCodex: {
+                    apiFormat: ApiFormat.OPENAI_RESPONSES,
+                    websocketEnabled: true,
                 },
             }),
             mode: "act",

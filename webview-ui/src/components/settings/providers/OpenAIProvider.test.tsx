@@ -286,8 +286,39 @@ describe("OpenAIProvider", () => {
 
         fireEvent.change(apiFormat, { target: { value: String(ApiFormat.OPENAI_CHAT) } })
         expect(onUpdate).toHaveBeenCalledWith({
-            openai: expect.objectContaining({ apiFormat: ApiFormat.OPENAI_CHAT }),
+            openai: expect.objectContaining({ apiFormat: ApiFormat.OPENAI_CHAT, websocketEnabled: false }),
         })
+    })
+
+    it("shows the WebSocket transport toggle only for OpenAI Responses and updates it across languages", () => {
+        const onUpdate = vi.fn()
+        const initialProfile = {
+            id: "ws-openai",
+            provider: "openai",
+            modelId: "gpt-multi",
+            openai: OpenAiProviderConfig.create({ apiFormat: ApiFormat.OPENAI_RESPONSES }),
+        } as unknown as ApiProfile
+
+        const view = render(<EditableProfile initialProfile={initialProfile} language="en" onUpdate={onUpdate} />)
+
+        const checkbox = screen.getByRole("checkbox", { name: "Use WebSocket transport" })
+        expect(checkbox).not.toBeChecked()
+        fireEvent.click(checkbox)
+        expect(onUpdate).toHaveBeenLastCalledWith({
+            openai: expect.objectContaining({ apiFormat: ApiFormat.OPENAI_RESPONSES, websocketEnabled: true }),
+        })
+        expect(checkbox).toBeChecked()
+
+        view.rerender(<EditableProfile initialProfile={initialProfile} language="zh-CN" onUpdate={onUpdate} />)
+        expect(screen.getByRole("checkbox", { name: "使用 WebSocket 传输" })).toBeChecked()
+
+        fireEvent.change(screen.getByRole("combobox", { name: "API 格式" }), {
+            target: { value: String(ApiFormat.OPENAI_CHAT) },
+        })
+        expect(onUpdate).toHaveBeenLastCalledWith({
+            openai: expect.objectContaining({ apiFormat: ApiFormat.OPENAI_CHAT, websocketEnabled: false }),
+        })
+        expect(screen.queryByRole("checkbox", { name: "使用 WebSocket 传输" })).not.toBeInTheDocument()
     })
 
     it("leaves image source and model selection to the API Profile card", () => {

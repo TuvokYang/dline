@@ -186,6 +186,12 @@ export function projectOpenAIResponsesPromptCache(input: OpenAIResponsesPromptCa
         taskNamespace: input.taskNamespace,
         tools: input.tools,
     })
+    if (input.systemPromptPlacement === "inherited") {
+        return {
+            input: input.input,
+            promptCacheKey,
+        }
+    }
     if (input.mode === "explicit") {
         return {
             input: prependDeveloperSystemPrompt(input.systemPrompt, input.input, true),
@@ -196,12 +202,6 @@ export function projectOpenAIResponsesPromptCache(input: OpenAIResponsesPromptCa
 
     const placement =
         input.systemPromptPlacement ?? (usesResponsesDeveloperSystemPrompt(input.modelId) ? "developer" : "instructions")
-    if (placement === "inherited") {
-        return {
-            input: input.input,
-            promptCacheKey,
-        }
-    }
     if (placement === "developer") {
         return {
             input: prependDeveloperSystemPrompt(input.systemPrompt, input.input, false),

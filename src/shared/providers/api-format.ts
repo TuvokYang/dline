@@ -7,7 +7,6 @@ const API_FORMAT_LABELS: Partial<Record<ApiFormat, string>> = {
     [ApiFormat.OPENAI_CHAT]: "OpenAI Chat",
     [ApiFormat.R1_CHAT]: "R1 Chat",
     [ApiFormat.OPENAI_RESPONSES]: "OpenAI Responses",
-    [ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE]: "OpenAI Responses WebSocket",
 }
 
 /** Return the user-facing label for an API protocol. */

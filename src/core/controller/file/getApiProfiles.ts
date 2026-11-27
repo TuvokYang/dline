@@ -21,7 +21,7 @@ import {
 } from "@core/storage/secrets"
 import { GPT_IMAGE_2_5_MODEL_ID, GPT_IMAGE_2_SUBSCRIPTION_MODEL_ID } from "@shared/image-generation"
 import { EmptyRequest } from "@shared/proto/dline/common"
-import type { ModelCapabilities, ModelPricing } from "@shared/proto/dline/models/metadata"
+import { ApiFormat, apiFormatFromJSON, type ModelCapabilities, type ModelPricing } from "@shared/proto/dline/models/metadata"
 import { ApiProfile, ApiProfilesResponse, ImageGenerationSource } from "@shared/proto/dline/profile"
 import { AnthropicProviderConfig } from "@shared/proto/dline/provider/anthropic"
 import { BedrockProviderConfig } from "@shared/proto/dline/provider/bedrock"
@@ -441,6 +441,68 @@ function migrateLegacyServerToolOverride(profile: ApiProfile): boolean {
     return true
 }
 
+function isLegacyWebsocketApiFormat(value: unknown): boolean {
+    return value === "OPENAI_RESPONSES_WEBSOCKET_MODE" || value === 5
+}
+
+/** Migrate retired `OPENAI_RESPONSES_WEBSOCKET_MODE` enum values to `OPENAI_RESPONSES` + `websocketEnabled`. */
+function migrateLegacyWebsocketApiFormat(profile: unknown): { profile: unknown; migrated: boolean } {
+    if (!profile || typeof profile !== "object") return { profile, migrated: false }
+    const raw = profile as Record<string, unknown>
+    let next: Record<string, unknown> = raw
+    let migrated = false
+
+    const ensureClone = () => {
+        if (next === raw) next = { ...raw }
+        return next
+    }
+
+    for (const key of ["openai", "openaiCodex", "openai_codex"] as const) {
+        const providerConfig = raw[key]
+        if (!providerConfig || typeof providerConfig !== "object" || Array.isArray(providerConfig)) continue
+        const cfg = providerConfig as Record<string, unknown>
+        const formatKey = Object.hasOwn(cfg, "apiFormat")
+            ? "apiFormat"
+            : Object.hasOwn(cfg, "api_format")
+              ? "api_format"
+              : undefined
+        if (!formatKey || !isLegacyWebsocketApiFormat(cfg[formatKey])) continue
+        const explicitWebsocket = cfg.websocketEnabled ?? cfg.websocket_enabled
+        const updatedConfig: Record<string, unknown> = {
+            ...cfg,
+            [formatKey]: "OPENAI_RESPONSES",
+            ...(explicitWebsocket === undefined ? { websocketEnabled: true } : {}),
+        }
+        ensureClone()[key] = updatedConfig
+        migrated = true
+    }
+
+    for (const infoKey of ["modelInfo", "model_info"] as const) {
+        const rawInfo = raw[infoKey]
+        if (!rawInfo || typeof rawInfo !== "object" || Array.isArray(rawInfo)) continue
+        const info = rawInfo as Record<string, unknown>
+        const formatsKey = Object.hasOwn(info, "apiFormats")
+            ? "apiFormats"
+            : Object.hasOwn(info, "api_formats")
+              ? "api_formats"
+              : undefined
+        if (!formatsKey || !Array.isArray(info[formatsKey])) continue
+        const formats = info[formatsKey] as unknown[]
+        if (!formats.some(isLegacyWebsocketApiFormat)) continue
+        const normalizedFormats: ApiFormat[] = []
+        for (const entry of formats) {
+            const parsed = isLegacyWebsocketApiFormat(entry) ? ApiFormat.OPENAI_RESPONSES : apiFormatFromJSON(entry)
+            if (parsed !== ApiFormat.UNRECOGNIZED && !normalizedFormats.includes(parsed)) {
+                normalizedFormats.push(parsed)
+            }
+        }
+        ensureClone()[infoKey] = { ...info, [formatsKey]: normalizedFormats }
+        migrated = true
+    }
+
+    return { profile: next, migrated }
+}
+
 function normalizeApiProfileWithMigration(profile: unknown): { profile: ApiProfile; migrated: boolean } {
     let profileInput = profile
     let migrated = false
@@ -461,6 +523,9 @@ function normalizeApiProfileWithMigration(profile: unknown): { profile: ApiProfi
     const migratedPricing = migrateLegacyFlatPricing(profileInput)
     profileInput = migratedPricing.profile
     if (migratedPricing.migrated) migrated = true
+    const migratedWebsocket = migrateLegacyWebsocketApiFormat(profileInput)
+    profileInput = migratedWebsocket.profile
+    if (migratedWebsocket.migrated) migrated = true
     const normalized = ApiProfile.fromJSON(profileInput ?? {})
     let hasExplicitImageSource = false
     if (profileInput && typeof profileInput === "object") {

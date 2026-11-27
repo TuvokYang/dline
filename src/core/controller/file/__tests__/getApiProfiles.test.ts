@@ -5,7 +5,7 @@ import path from "node:path"
 import { ModelRegistry } from "@core/model-registry/ModelRegistry"
 import { getAllApiKeys, resetAllStores } from "@core/storage/secrets"
 import { EmptyRequest } from "@shared/proto/dline/common"
-import { ServerTool } from "@shared/proto/dline/models/metadata"
+import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
 import { ApiProfile, ImageGenerationSource } from "@shared/proto/dline/profile"
 import { withSearchChoice } from "@shared/providers/model-web-search"
 import { flatMeteredPricing } from "@shared/providers/pricing-shape"
@@ -25,6 +25,55 @@ import {
 import { updateApiProfiles } from "../updateApiProfiles"
 
 describe("getApiProfiles", () => {
+    it("migrates retired OPENAI_RESPONSES_WEBSOCKET_MODE to OPENAI_RESPONSES + websocketEnabled", () => {
+        const openAiProfile = normalizeApiProfile({
+            id: "legacy-openai-ws",
+            name: "Legacy OpenAI WS",
+            provider: "openai",
+            modelId: "gpt-6.2-astra",
+            modelInfo: {
+                id: "gpt-6.2-astra",
+                apiFormats: ["OPENAI_RESPONSES", "OPENAI_RESPONSES_WEBSOCKET_MODE"],
+            },
+            openai: {
+                apiFormat: "OPENAI_RESPONSES_WEBSOCKET_MODE",
+            },
+        })
+        expect(openAiProfile.openai?.apiFormat).to.equal(ApiFormat.OPENAI_RESPONSES)
+        expect(openAiProfile.openai?.websocketEnabled).to.equal(true)
+        expect(openAiProfile.modelInfo?.apiFormats).to.deep.equal([ApiFormat.OPENAI_RESPONSES])
+
+        const codexProfile = normalizeApiProfile({
+            id: "legacy-codex-ws-numeric",
+            name: "Legacy Codex WS",
+            provider: "openai-codex",
+            modelId: "gpt-6.2-sol",
+            modelInfo: {
+                id: "gpt-6.2-sol",
+                apiFormats: [5],
+            },
+            openaiCodex: {
+                apiFormat: 5,
+            },
+        })
+        expect(codexProfile.openaiCodex?.apiFormat).to.equal(ApiFormat.OPENAI_RESPONSES)
+        expect(codexProfile.openaiCodex?.websocketEnabled).to.equal(true)
+        expect(codexProfile.modelInfo?.apiFormats).to.deep.equal([ApiFormat.OPENAI_RESPONSES])
+
+        const explicitFalse = normalizeApiProfile({
+            id: "legacy-codex-ws-disabled",
+            name: "Legacy Codex WS Disabled",
+            provider: "openai-codex",
+            modelId: "gpt-6.2-sol",
+            openaiCodex: {
+                apiFormat: "OPENAI_RESPONSES_WEBSOCKET_MODE",
+                websocketEnabled: false,
+            },
+        })
+        expect(explicitFalse.openaiCodex?.apiFormat).to.equal(ApiFormat.OPENAI_RESPONSES)
+        expect(explicitFalse.openaiCodex?.websocketEnabled).to.equal(false)
+    })
+
     it("treats a legacy Profile without enabled as active", () => {
         const profile = normalizeApiProfile({
             id: "legacy-deepseek",
