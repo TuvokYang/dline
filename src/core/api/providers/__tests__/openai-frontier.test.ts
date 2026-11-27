@@ -147,6 +147,8 @@ describe("GPT-6.1 Terra", () => {
         }
         const request = create.mock.calls[0]?.[0] as OpenAI.Responses.ResponseCreateParams
         expect(request.model).toBe(id)
+        expect(request.instructions).toBe("stable instructions")
+        expect(request.input).toEqual([{ role: "user", content: [{ type: "input_text", text: "hello" }] }])
         expect(request.tools).toMatchObject([{ type: "function", name: "inspect" }])
         expect(request.reasoning).toEqual(effort === "none" ? { effort } : { effort, summary: "auto" })
         if (effort !== "none") expect(request).not.toHaveProperty("temperature")
@@ -181,11 +183,44 @@ describe.each(models)("%s Responses requests", (id) => {
         }
         const request = create.mock.calls[0]?.[0] as OpenAI.Responses.ResponseCreateParams
         expect(request.model).toBe(id)
+        expect(request.instructions).toBeUndefined()
+        expect(request.prompt_cache_options).toBeUndefined()
+        expect(request.input).toEqual([
+            {
+                type: "message",
+                role: "developer",
+                content: [{ type: "input_text", text: "stable instructions" }],
+            },
+            { role: "user", content: [{ type: "input_text", text: "hello" }] },
+        ])
+        expect(JSON.stringify(request)).not.toContain("prompt_cache_breakpoint")
         expect(request.tools).toMatchObject([{ type: "function", name: "inspect" }])
         expect(request.reasoning).toMatchObject({ summary: "auto" })
         expect(request.reasoning?.effort).toBe(reasoning.effort === "max" ? "max" : undefined)
         expect(request).not.toHaveProperty("temperature")
         expect(request).not.toHaveProperty("top_p")
         expect(request).not.toHaveProperty("reasoning_effort")
+    })
+
+    it("keeps WebSocket mode on top-level instructions for now", async () => {
+        const handler = new OpenAiHandler({
+            profile: ApiProfile.create({
+                provider: "openai",
+                modelId: id,
+                modelInfo: { id, apiFormats: [ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE] },
+                openai: { apiFormat: ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE },
+            }),
+            mode: "act",
+        })
+        const create = vi.fn().mockResolvedValue({ [Symbol.asyncIterator]: async function* () {} })
+        vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+            responses: { create },
+        })
+        for await (const _chunk of handler.createMessage("stable instructions", [{ role: "user", content: "hello" }])) {
+            // Consume stream.
+        }
+        const request = create.mock.calls[0]?.[0] as OpenAI.Responses.ResponseCreateParams
+        expect(request.instructions).toBe("stable instructions")
+        expect(request.input).toEqual([{ role: "user", content: [{ type: "input_text", text: "hello" }] }])
     })
 })

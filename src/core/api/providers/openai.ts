@@ -498,6 +498,9 @@ export class OpenAiHandler extends ApiHandler {
                 tools: responseTools,
                 taskNamespace: options?.taskNamespace,
                 mode,
+                ...(this.apiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
+                    ? { systemPromptPlacement: "instructions" as const }
+                    : {}),
             })
             this.recordResponsesCompactionDiagnostic({
                 requestKind: options?.generation?.purpose === "compaction" ? "compaction" : "ordinary",

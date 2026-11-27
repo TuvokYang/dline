@@ -26,7 +26,7 @@ import { Logger } from "@/shared/services/Logger"
 import { redactDiagnosticString } from "@/shared/services/logging/safe-diagnostic-value"
 import { AccountUsage, type AccountUsageResetResult, ApiHandler, ApiHandlerContext, type ApiRequestOptions } from "../ApiHandler"
 import { isOutputLimitExceededError, OutputLimitExceededError } from "../stream/OutputLimitExceededError"
-import { projectOpenAIResponsesPromptCache } from "../transform/openai-prompt-cache"
+import { type OpenAIResponsesSystemPromptPlacement, projectOpenAIResponsesPromptCache } from "../transform/openai-prompt-cache"
 import { convertToOpenAIResponsesInput, declaredResponsesHostedToolNames } from "../transform/openai-response-format"
 import { ApiStream } from "../transform/stream"
 import { handleResponsesApiStreamResponse } from "../utils/responses_api_support"
@@ -75,6 +75,8 @@ export class OpenAiCodexHandler extends ApiHandler {
         fallback: CompactionWireDiagnosticSnapshot
     }
     private activeRuntimeOperations = 0
+    /** Latches if the Codex backend rejects HTTP requests that omit top-level `instructions`. */
+    private codexDeveloperPromptRejected = false
     private readonly runtimeConfig = resolveOpenAiCodexRuntimeConfig()
 
     constructor(private ctx: ApiHandlerContext) {
@@ -273,6 +275,32 @@ export class OpenAiCodexHandler extends ApiHandler {
         return /unauthorized|invalid token|not authenticated|authentication|401/i.test(message)
     }
 
+    private isMissingCodexInstructionsError(error: unknown): boolean {
+        if (this.safeErrorStatus(error) !== 400) return false
+        const candidates: string[] = []
+        if (error instanceof Error && error.message) candidates.push(error.message)
+        if (typeof error === "object" && error !== null) {
+            const record = error as {
+                message?: unknown
+                param?: unknown
+                responseBody?: unknown
+                detail?: unknown
+                error?: { message?: unknown; param?: unknown }
+            }
+            for (const value of [
+                record.message,
+                record.param,
+                record.responseBody,
+                record.detail,
+                record.error?.message,
+                record.error?.param,
+            ]) {
+                if (typeof value === "string" && value) candidates.push(value)
+            }
+        }
+        return candidates.some((text) => /\binstructions\b/i.test(text))
+    }
+
     override supportsServerTool(tool: ServerTool): boolean {
         if (tool !== ServerTool.WEB_SEARCH) {
             return false
@@ -359,9 +387,29 @@ export class OpenAiCodexHandler extends ApiHandler {
             })
             const usePreviousResponseId = useWebsocketMode && !!previousResponseId
 
-            // Build request body
-            const requestBody = this.buildRequestBody(model, input, systemPrompt, tools, previousResponseId, options)
-            const fallbackRequestBody = this.buildRequestBody(model, input, systemPrompt, tools, undefined, options)
+            // Build request body. Keep WebSocket mode on top-level `instructions` for now;
+            // HTTP Responses places GPT-6.2+ system prompts in a leading `developer` message
+            // unless this endpoint previously rejected omitting `instructions`.
+            const resolveSystemPromptPlacement = (): OpenAIResponsesSystemPromptPlacement | undefined =>
+                useWebsocketMode || this.codexDeveloperPromptRejected ? "instructions" : undefined
+            let requestBody = this.buildRequestBody(
+                model,
+                input,
+                systemPrompt,
+                tools,
+                previousResponseId,
+                options,
+                resolveSystemPromptPlacement(),
+            )
+            let fallbackRequestBody = this.buildRequestBody(
+                model,
+                input,
+                systemPrompt,
+                tools,
+                undefined,
+                options,
+                resolveSystemPromptPlacement(),
+            )
             this.recordCodexCompactionDiagnostic({
                 requestKind: options?.generation?.purpose === "compaction" ? "compaction" : "ordinary",
                 modelId: model.id,
@@ -371,14 +419,61 @@ export class OpenAiCodexHandler extends ApiHandler {
                 fallbackBody: fallbackRequestBody,
             })
 
-            // Make the request with retry on auth failure
-            for (let attempt = 0; attempt < 2; attempt++) {
+            // Make the request with retry on auth failure or Codex HTTP `instructions`-required rejection.
+            let didRefreshAuth = false
+            let didFallbackToInstructions = false
+            while (true) {
+                let emitted = false
                 try {
-                    yield* this.executeRequest(requestBody, fallbackRequestBody, model, credential, usePreviousResponseId, signal)
+                    for await (const chunk of this.executeRequest(
+                        requestBody,
+                        fallbackRequestBody,
+                        model,
+                        credential,
+                        usePreviousResponseId,
+                        signal,
+                    )) {
+                        emitted = true
+                        yield chunk
+                    }
                     return
                 } catch (error) {
+                    if (
+                        !signal.aborted &&
+                        !emitted &&
+                        !useWebsocketMode &&
+                        !didFallbackToInstructions &&
+                        requestBody.instructions === undefined &&
+                        this.isMissingCodexInstructionsError(error)
+                    ) {
+                        this.codexDeveloperPromptRejected = true
+                        didFallbackToInstructions = true
+                        Logger.warn(
+                            "OpenAI Codex endpoint rejected omitted top-level instructions; retrying with top-level instructions.",
+                        )
+                        requestBody = this.buildRequestBody(
+                            model,
+                            input,
+                            systemPrompt,
+                            tools,
+                            previousResponseId,
+                            options,
+                            "instructions",
+                        )
+                        fallbackRequestBody = this.buildRequestBody(
+                            model,
+                            input,
+                            systemPrompt,
+                            tools,
+                            undefined,
+                            options,
+                            "instructions",
+                        )
+                        continue
+                    }
                     if (!signal.aborted && this.isAuthenticationFailure(error)) {
-                        if (attempt === 0) {
+                        if (!didRefreshAuth) {
+                            didRefreshAuth = true
                             const refreshed = await openAiCodexOAuthManager.forceRefreshCredentialContext(this.profileId)
                             signal.throwIfAborted()
                             if (refreshed) {
@@ -411,6 +506,7 @@ export class OpenAiCodexHandler extends ApiHandler {
         tools?: ChatCompletionTool[],
         previousResponseId?: string,
         options?: ApiRequestOptions,
+        systemPromptPlacement?: OpenAIResponsesSystemPromptPlacement,
     ): any {
         const reasoning = resolveCodexReasoning(model.info.capabilities, this.reasoningConfig)
         const includeReasoning = reasoning.enabled
@@ -432,6 +528,7 @@ export class OpenAiCodexHandler extends ApiHandler {
             input: formattedInput as OpenAI.Responses.ResponseInput,
             tools: responseTools,
             taskNamespace: options?.taskNamespace,
+            ...(systemPromptPlacement ? { systemPromptPlacement } : {}),
         })
         const include = [
             ...(includeReasoning ? ["reasoning.encrypted_content"] : []),
@@ -515,7 +612,12 @@ export class OpenAiCodexHandler extends ApiHandler {
 
             yield* this.handleResponseEvents(stream, model, sentAtMs)
         } catch (error) {
-            if (signal.aborted || isOutputLimitExceededError(error) || this.isAuthenticationFailure(error)) {
+            if (
+                signal.aborted ||
+                isOutputLimitExceededError(error) ||
+                this.isAuthenticationFailure(error) ||
+                (requestBody.instructions === undefined && this.isMissingCodexInstructionsError(error))
+            ) {
                 throw error
             }
             // Fallback to manual SSE via fetch

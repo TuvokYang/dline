@@ -1013,4 +1013,116 @@ describe("OpenAiCodexHandler hosted Web Search", () => {
         expect((handler as any).websocketRequestOwner).to.equal(undefined)
         expect([...listeners.values()].every((entries) => entries.size === 0)).to.equal(true)
     })
+
+    it("places GPT-6.2 HTTP system prompts in a leading developer message without breakpoints", async () => {
+        const handler = new OpenAiCodexHandler({
+            profile: ApiProfile.create({
+                id: "profile-gpt62-http",
+                provider: "openai-codex",
+                modelId: "gpt-6.2-astra",
+                modelInfo: {
+                    id: "gpt-6.2-astra",
+                    apiFormats: [ApiFormat.OPENAI_RESPONSES],
+                },
+            }),
+            mode: "act",
+        })
+        vi.spyOn(openAiCodexOAuthManager, "getCredentialContext").mockResolvedValue({
+            accessToken: "access-token",
+            expires: 1_900_000_000_000,
+            accountId: "account-a",
+        })
+        const bodies: Record<string, unknown>[] = []
+        vi.spyOn(handler as any, "executeRequest").mockImplementation(async function* (...args: unknown[]) {
+            bodies.push(args[0] as Record<string, unknown>)
+        })
+
+        await collect(handler.createMessage("stable system", [{ role: "user", content: "hello" }]))
+
+        expect(bodies).to.have.length(1)
+        expect(bodies[0]).not.to.have.property("instructions")
+        expect(bodies[0]).not.to.have.property("prompt_cache_options")
+        expect(bodies[0].input).to.deep.equal([
+            { type: "message", role: "developer", content: [{ type: "input_text", text: "stable system" }] },
+            { role: "user", content: [{ type: "input_text", text: "hello" }] },
+        ])
+        expect(JSON.stringify(bodies[0])).not.to.contain("prompt_cache_breakpoint")
+    })
+
+    it("keeps GPT-6.2 WebSocket mode on top-level instructions for now", async () => {
+        const handler = new OpenAiCodexHandler({
+            profile: ApiProfile.create({
+                id: "profile-gpt62-ws",
+                provider: "openai-codex",
+                modelId: "gpt-6.2-astra",
+                modelInfo: {
+                    id: "gpt-6.2-astra",
+                    apiFormats: [ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE],
+                },
+            }),
+            mode: "act",
+        })
+        vi.spyOn(openAiCodexOAuthManager, "getCredentialContext").mockResolvedValue({
+            accessToken: "access-token",
+            expires: 1_900_000_000_000,
+            accountId: "account-a",
+        })
+        const bodies: Record<string, unknown>[] = []
+        vi.spyOn(handler as any, "executeRequest").mockImplementation(async function* (...args: unknown[]) {
+            bodies.push(args[0] as Record<string, unknown>)
+        })
+
+        await collect(handler.createMessage("stable system", [{ role: "user", content: "hello" }]))
+
+        expect(bodies).to.have.length(1)
+        expect(bodies[0].instructions).to.equal("stable system")
+        expect(bodies[0].input).to.deep.equal([{ role: "user", content: [{ type: "input_text", text: "hello" }] }])
+    })
+
+    it("falls back and latches top-level instructions if Codex HTTP rejects omitting instructions", async () => {
+        const handler = new OpenAiCodexHandler({
+            profile: ApiProfile.create({
+                id: "profile-gpt62-fallback",
+                provider: "openai-codex",
+                modelId: "gpt-6.2-sol",
+                modelInfo: {
+                    id: "gpt-6.2-sol",
+                    apiFormats: [ApiFormat.OPENAI_RESPONSES],
+                },
+            }),
+            mode: "act",
+        })
+        vi.spyOn(openAiCodexOAuthManager, "getCredentialContext").mockResolvedValue({
+            accessToken: "access-token",
+            expires: 1_900_000_000_000,
+            accountId: "account-a",
+        })
+        const seenBodies: Record<string, unknown>[] = []
+        vi.spyOn(handler as any, "executeRequest").mockImplementation(async function* (...args: unknown[]) {
+            const body = args[0] as Record<string, unknown>
+            seenBodies.push(body)
+            if (seenBodies.length === 1) {
+                throw Object.assign(new Error("Instructions are required"), { status: 400 })
+            }
+            yield { type: "text", text: "ok" }
+        })
+
+        const firstChunks = await collect(handler.createMessage("stable system", [{ role: "user", content: "turn 1" }]))
+        const secondChunks = await collect(handler.createMessage("stable system", [{ role: "user", content: "turn 2" }]))
+
+        expect(firstChunks).to.deep.equal([{ type: "text", text: "ok" }])
+        expect(secondChunks).to.deep.equal([{ type: "text", text: "ok" }])
+        expect(seenBodies).to.have.length(3)
+        expect(seenBodies[0]).not.to.have.property("instructions")
+        expect((seenBodies[0].input as unknown[])[0]).to.deep.equal({
+            type: "message",
+            role: "developer",
+            content: [{ type: "input_text", text: "stable system" }],
+        })
+        expect(seenBodies[1].instructions).to.equal("stable system")
+        expect(seenBodies[1].input).to.deep.equal([{ role: "user", content: [{ type: "input_text", text: "turn 1" }] }])
+        // Subsequent turns skip the rejected developer-only attempt.
+        expect(seenBodies[2].instructions).to.equal("stable system")
+        expect(seenBodies[2].input).to.deep.equal([{ role: "user", content: [{ type: "input_text", text: "turn 2" }] }])
+    })
 })

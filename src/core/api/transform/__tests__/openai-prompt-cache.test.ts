@@ -1,7 +1,11 @@
 import { expect } from "chai"
 import type OpenAI from "openai"
 import { describe, it } from "vitest"
-import { projectOpenAIChatPromptCache, projectOpenAIResponsesPromptCache } from "../openai-prompt-cache"
+import {
+    projectOpenAIChatPromptCache,
+    projectOpenAIResponsesPromptCache,
+    usesResponsesDeveloperSystemPrompt,
+} from "../openai-prompt-cache"
 
 describe("OpenAI prompt cache projection", () => {
     it("uses automatic prompt caching by default without inferring explicit support from the model ID", () => {
@@ -188,6 +192,70 @@ describe("OpenAI prompt cache projection", () => {
             ],
         })
         expect(JSON.stringify(projection.input[1])).to.contain("dynamic")
+    })
+
+    it("places GPT-6.2+ Responses system prompts in a leading developer message without explicit breakpoints", () => {
+        expect(usesResponsesDeveloperSystemPrompt("gpt-6.2-astra")).to.equal(true)
+        expect(usesResponsesDeveloperSystemPrompt("gpt-6.2-sol")).to.equal(true)
+        expect(usesResponsesDeveloperSystemPrompt("openai/gpt-6.2-astra")).to.equal(true)
+        expect(usesResponsesDeveloperSystemPrompt("gpt-6.3-mini")).to.equal(true)
+        expect(usesResponsesDeveloperSystemPrompt("gpt-7")).to.equal(true)
+        expect(usesResponsesDeveloperSystemPrompt("gpt-6.1-terra")).to.equal(false)
+        expect(usesResponsesDeveloperSystemPrompt("gpt-6-astra")).to.equal(false)
+        expect(usesResponsesDeveloperSystemPrompt("gpt-5.6-sol")).to.equal(false)
+        expect(usesResponsesDeveloperSystemPrompt("o4-mini")).to.equal(false)
+
+        const input: OpenAI.Responses.ResponseInput = [{ role: "user", content: [{ type: "input_text", text: "dynamic" }] }]
+        const original = structuredClone(input)
+        const projection = projectOpenAIResponsesPromptCache({
+            modelId: "gpt-6.2-astra",
+            systemPrompt: "stable system",
+            input,
+            tools: [],
+        })
+
+        expect(input).to.deep.equal(original)
+        expect(projection.instructions).to.equal(undefined)
+        expect(projection.promptCacheOptions).to.equal(undefined)
+        expect(projection.promptCacheKey).to.match(/^dline_cache_[0-9a-f]{32}$/)
+        expect(projection.input).to.deep.equal([
+            {
+                type: "message",
+                role: "developer",
+                content: [{ type: "input_text", text: "stable system" }],
+            },
+            ...original,
+        ])
+        expect(JSON.stringify(projection.input)).not.to.contain("prompt_cache_breakpoint")
+    })
+
+    it("honors explicit systemPromptPlacement overrides on GPT-6.2+ models", () => {
+        const input: OpenAI.Responses.ResponseInput = [{ role: "user", content: [{ type: "input_text", text: "dynamic" }] }]
+        const projection = projectOpenAIResponsesPromptCache({
+            modelId: "gpt-6.2-astra",
+            systemPrompt: "stable system",
+            input,
+            tools: [],
+            systemPromptPlacement: "instructions",
+        })
+
+        expect(projection.instructions).to.equal("stable system")
+        expect(projection.input).to.equal(input)
+        expect(projection.promptCacheOptions).to.equal(undefined)
+    })
+
+    it("keeps GPT-6.1 Responses models on top-level instructions", () => {
+        const input: OpenAI.Responses.ResponseInput = [{ role: "user", content: [{ type: "input_text", text: "dynamic" }] }]
+        const projection = projectOpenAIResponsesPromptCache({
+            modelId: "gpt-6.1-terra",
+            systemPrompt: "stable system",
+            input,
+            tools: [],
+        })
+
+        expect(projection.instructions).to.equal("stable system")
+        expect(projection.input).to.equal(input)
+        expect(projection.promptCacheOptions).to.equal(undefined)
     })
 
     it("shares cache routing keys across Chat and Responses for the same stable prefix", () => {
