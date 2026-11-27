@@ -1,10 +1,12 @@
 # Changelog
 
-## [Unreleased]
+## [0.14.4]
 
 ### Added
 - Z.ai GLM models now execute tool calls written as `<tool_call>` markers in reply text instead of printing them as prose.
+- Hovering the task header now displays the full task text and Task ID.
 - The environment details block now includes a Workspace Recovery section showing whether checkpoints are enabled.
+- Added GitHub and X project links to the bottom of About and What's New.
 
 ### Fixed
 - Fixed completed read-only tool rounds occasionally failing to collapse into activity folds and splitting adjacent fold blocks.
@@ -21,3 +23,5 @@
 - Fixed capability panels occasionally stalling when a JSONL lock file remained after a failed read.
 - Fixed the task panel title not matching the latest TODO progress.
 - Fixed collapsed subagent rows reporting 0/N tools instead of the real active count.
+- Fixed the chat view failing to return to the live tail after sending replies or steering input.
+- Fixed model capability and reasoning-effort defaults drifting, persisted Hosted Search per Profile, and hid Add Tier under flat pricing.

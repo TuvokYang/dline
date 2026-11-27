@@ -16,9 +16,13 @@ Format rules, enforced by webview-ui/vite-whats-new.ts at build time:
   number of items. Unit tests enforce both.
 -->
 
-## Unreleased
+## 0.14.4
 
 - **GLM text tool calls**: Z.ai GLM models execute tool calls written as markup instead of printing them.
+- **Queue input while busy**: Keep queueing and steering inputs across work, compaction, and mode switches.
+- **Long-task stability**: Fix long-task resume timeouts, OOM crashes, token undercounting, and rate-history stalls.
+- **Task header hover**: Hover the task header to inspect the full task text and Task ID.
+- **Folding & capabilities**: Fix unfolded read-only tool rounds, restore timeouts, and cleared global capabilities.
 
 ## 0.14.3
 
