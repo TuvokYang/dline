@@ -138,6 +138,9 @@ export function summarizeActivityFold(
         } else if (member.say === "tool" || member.ask === "tool") {
             const name = toolName(member)
             if (!name) continue
+            // An orphaned partial low-stakes read preview from a past round renders
+            // nothing in ToolGroupRenderer, so do not inflate the fold's read tally.
+            if (member.partial === true && member.say === "tool" && READ_TOOLS.has(name)) continue
             // An assistant update is prose the model wrote, not work it performed,
             // so it is counted as a message and never as a tool call.
             if (ASSISTANT_TOOLS.has(name)) {

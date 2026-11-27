@@ -65,6 +65,7 @@ export interface TaskCompositionServices {
     readonly tool: ProductionToolExecutionService
     readonly toolResources: OwnedToolResources
     readonly toolOperationCancellation?: ProductionToolAdapterOptions["operationCancellation"]
+    readonly toolWithdrawUnsettled?: ProductionToolAdapterOptions["withdrawUnsettled"]
     readonly toolSurface: ToolDomainSurface
     /** Task-scoped WS-072 scheduler; owned by the task so limit changes reach the active turn. */
     readonly toolScheduler: TurnToolScheduler
@@ -257,6 +258,7 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
                     approvalFeedback,
                     resources: options.services.toolResources,
                     operationCancellation: options.services.toolOperationCancellation,
+                    withdrawUnsettled: options.services.toolWithdrawUnsettled,
                     surface: options.services.toolSurface,
                     service: options.services.tool,
                     scheduler: options.services.toolScheduler,

@@ -37,6 +37,8 @@ export interface ProductionToolAdapterOptions {
     readonly scheduler: TurnToolScheduler
     /** Abort and renew handler-owned operation scopes across runtime halts. */
     readonly operationCancellation?: ToolCommandExecutorOptions["operationCancellation"]
+    /** Withdraw a streaming preview card when a block is skipped, cancelled, or halted before execution. */
+    readonly withdrawUnsettled?: ToolCommandExecutorOptions["withdrawUnsettled"]
     /** Read the task's consecutive mistake count and live configured ceiling. */
     readonly readMistakeLimit?: () => { readonly count: number; readonly limit: number }
     /**
@@ -151,6 +153,7 @@ export function createProductionToolAdapter(options: ProductionToolAdapterOption
         surface: options.surface,
         scheduler: options.scheduler,
         operationCancellation: options.operationCancellation,
+        withdrawUnsettled: options.withdrawUnsettled,
         readMistakeLimit: options.readMistakeLimit,
         runner: createToolDomainRunner({
             resources: options.resources,

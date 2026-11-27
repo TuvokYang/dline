@@ -29,6 +29,8 @@ export type ToolCommandExecutorOptions = Omit<ToolExecutionDomainOptions, "sink"
     readonly readMistakeLimit?: () => { readonly count: number; readonly limit: number }
     /** Cancellation scope shared by handlers such as Web Fetch and image generation. */
     readonly operationCancellation?: ToolOperationCancellationPort
+    /** Remove a streaming preview card when a block is skipped, cancelled, or rejected before running. */
+    readonly withdrawUnsettled?: (invocationRef: string) => Promise<void>
 }
 
 /** Adapts kernel tool commands to the single WS-072 tool execution domain. */
@@ -40,6 +42,7 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
     private readonly scheduler: TurnToolScheduler
     private readonly readMistakeLimit?: () => { readonly count: number; readonly limit: number }
     private readonly operationCancellation?: ToolOperationCancellationPort
+    private readonly withdrawUnsettled?: (invocationRef: string) => Promise<void>
     private readonly pending = new Map<string, PendingBlock>()
     private readonly executions = new Set<Promise<void>>()
     private readonly feedback = new Set<Promise<void>>()
@@ -50,10 +53,11 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
         options: ToolCommandExecutorOptions,
         private readonly events: TaskEventSink,
     ) {
-        const { scheduler, readMistakeLimit, operationCancellation, ...domainOptions } = options
+        const { scheduler, readMistakeLimit, operationCancellation, withdrawUnsettled, ...domainOptions } = options
         this.scheduler = scheduler
         this.readMistakeLimit = readMistakeLimit
         this.operationCancellation = operationCancellation
+        this.withdrawUnsettled = withdrawUnsettled
         this.toolDomain = new ToolExecutionDomain({
             ...domainOptions,
             sink: {
@@ -130,10 +134,13 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
         if (this.pending.has(domainCommand.commandId)) return
         const entry: PendingBlock = { command, block, resolve: () => undefined }
         if (outcome.error !== undefined) {
+            await this.withdrawCard(block.invocationRef)
             await this.submitTerminal(entry, "tool.failed", executorFailure("tool", outcome.error))
         } else if (outcome.skipped) {
+            await this.withdrawCard(block.invocationRef)
             await this.submitTerminal(entry, "tool.cancelled", "Skipped because an earlier tool call ended the turn")
         } else if (outcome.cancelled) {
+            await this.withdrawCard(block.invocationRef)
             await this.submitTerminal(entry, "tool.cancelled")
         }
     }
@@ -151,7 +158,10 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
         domainCommand: DomainToolRunCommand,
         signal: AbortSignal,
     ): Promise<void> {
-        if (signal.aborted || this.fencedHaltId) return
+        if (signal.aborted || this.fencedHaltId) {
+            await this.withdrawCard(block.invocationRef)
+            return
+        }
         const started = await this.events.submit({
             type: "tool.started",
             generation: command.generation,
@@ -159,7 +169,10 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
             turnId: command.turnId,
             blockId: block.blockId,
         })
-        if (started.kind === "rejected" || signal.aborted || this.fencedHaltId) return
+        if (started.kind === "rejected" || signal.aborted || this.fencedHaltId) {
+            await this.withdrawCard(block.invocationRef)
+            return
+        }
         const settled = new Promise<void>((resolve) => {
             this.pending.set(domainCommand.commandId, { command, block, resolve })
         })
@@ -172,6 +185,7 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
             const pending = [...this.pending.entries()]
             await Promise.all(
                 pending.map(async ([commandId, entry]) => {
+                    await this.withdrawCard(entry.block.invocationRef)
                     await this.submitTerminal(entry, "tool.cancelled")
                     this.settle(commandId)
                 }),
@@ -185,8 +199,20 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
             await this.submitTerminal(entry, "tool.completed", undefined, event.failed !== true)
         else if (event.kind === "tool.block_failed")
             await this.submitTerminal(entry, "tool.failed", executorFailure("tool", event.cause ?? new Error(event.message)))
-        else await this.submitTerminal(entry, "tool.cancelled")
+        else {
+            await this.withdrawCard(entry.block.invocationRef)
+            await this.submitTerminal(entry, "tool.cancelled")
+        }
         this.settle(event.commandId)
+    }
+
+    private async withdrawCard(invocationRef: string): Promise<void> {
+        if (!this.withdrawUnsettled) return
+        try {
+            await this.withdrawUnsettled(invocationRef)
+        } catch {
+            // Card cleanup is cosmetic and must never block terminal tool settlement.
+        }
     }
 
     private submitTerminal(

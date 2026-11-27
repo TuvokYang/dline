@@ -1135,6 +1135,7 @@ export class TaskSessionCompositionService {
                     },
                     reset: () => toolState.resetOperationCancellation(),
                 },
+                toolWithdrawUnsettled: (invocationRef) => toolExecution.withdrawUnsettled(invocationRef),
                 toolSurface: tool.surface,
                 toolScheduler: toolExecution.turnScheduler,
                 environment,

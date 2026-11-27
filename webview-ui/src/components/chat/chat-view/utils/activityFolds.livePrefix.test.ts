@@ -8,6 +8,7 @@ import {
     streamingRequest,
     userTask,
 } from "../components/messages/activityFoldStoryFixtures"
+import { summarizeActivityFold } from "./activityFoldSummary"
 import { isActivityFold, isExplorationRun } from "./chatRowKinds"
 import { groupChatRows } from "./messageUtils"
 
@@ -67,4 +68,66 @@ it("leaves Standard exploration grouping unchanged", () => {
     expect(runs).toHaveLength(1)
     expect(runs[0]._rounds).toHaveLength(3)
     expect(runs[0].map((message) => message.ts)).toEqual([10, 12, 20, 22, 30, 32])
+})
+
+it.each([
+    "message_segment",
+    "user_turn",
+] satisfies AggressiveRenderingLevel[])("%s folds an earlier read-only round even when an orphaned partial read preview was left behind", (level) => {
+    const transcript: UiMessage[] = [
+        userTask(1, "Inspect task-platform"),
+        restorePoint(10, "same"),
+        finishedRequest(11),
+        readFile(12, "a.ts"),
+        restorePoint(20, "same"),
+        finishedRequest(21),
+        { ts: 22, type: "say", say: "reasoning", text: "Checking files" },
+        readFile(23, "b.ts"),
+        // Orphaned streaming preview from a failed read in a finished round.
+        { ...readFile(24, "missing.ts"), partial: true },
+        restorePoint(30, "same"),
+        finishedRequest(31),
+        readFile(32, "c.ts"),
+        restorePoint(40, "same"),
+        streamingRequest(41),
+    ]
+    const rows = groupChatRows(transcript, undefined, { level })
+    const folds = rows.filter(isActivityFold)
+    expect(folds).toHaveLength(1)
+    expect(folds[0]._roundCount).toBe(3)
+    expect(rows.some(isExplorationRun)).toBe(false)
+    // Orphaned partial preview does not inflate the folded read count.
+    const summary = summarizeActivityFold(folds[0], new Map())
+    expect(summary.work.get("read")).toBe(3)
+})
+
+it.each([
+    "message_segment",
+    "user_turn",
+] satisfies AggressiveRenderingLevel[])("%s folds an earlier read-only round even when an orphaned partial read preview was left behind", (level) => {
+    const transcript: UiMessage[] = [
+        userTask(1, "Inspect task-platform"),
+        restorePoint(10, "same"),
+        finishedRequest(11),
+        readFile(12, "a.ts"),
+        restorePoint(20, "same"),
+        finishedRequest(21),
+        { ts: 22, type: "say", say: "reasoning", text: "Checking files" },
+        readFile(23, "b.ts"),
+        // Orphaned streaming preview from a failed read in a finished round.
+        { ...readFile(24, "missing.ts"), partial: true },
+        restorePoint(30, "same"),
+        finishedRequest(31),
+        readFile(32, "c.ts"),
+        restorePoint(40, "same"),
+        streamingRequest(41),
+    ]
+    const rows = groupChatRows(transcript, undefined, { level })
+    const folds = rows.filter(isActivityFold)
+    expect(folds).toHaveLength(1)
+    expect(folds[0]._roundCount).toBe(3)
+    expect(rows.some(isExplorationRun)).toBe(false)
+    // Orphaned partial preview does not inflate the folded read count.
+    const summary = summarizeActivityFold(folds[0], new Map())
+    expect(summary.work.get("read")).toBe(3)
 })

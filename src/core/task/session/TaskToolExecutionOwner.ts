@@ -36,6 +36,7 @@ import type { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 import { SubagentFanoutBudget, usableSubagentLimit } from "../tools/subagent/SubagentFanoutBudget"
 import { SubagentJobManager } from "../tools/subagent/SubagentJobManager"
 import type { ToolDenial } from "../tools/ToolExecutionResult"
+import { withdrawUnsettledCard } from "../tools/ToolExecutorCoordinator"
 import type { TaskCallbacks, TaskConfig, TaskInteractionPorts, TaskServices } from "../tools/types/TaskConfig"
 import { createUIHelpers } from "../tools/types/UIHelpers"
 import type { TaskApiHandlerOwner } from "./TaskApiHandlerOwner"
@@ -150,7 +151,15 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
     /** Withdraw a preview drawn before this call acquired its feedback-only disposition. */
     async settleAwayFeedback(block: ToolUse): Promise<void> {
         const row = this.options.messages.clineMessages.find((message) => message.ts === block.ts)
-        if (row?.partial) await this.options.messages.removeMessagesByTs([row.ts])
+        if (!row?.partial) return
+        await this.options.messages.removeMessagesByTs([row.ts])
+        await this.options.callbacks?.postStateToWebview?.()
+    }
+
+    /** Withdraw a streaming preview card when a planned block never runs (skipped, cancelled, or halted). */
+    async withdrawUnsettled(invocationRef: string): Promise<void> {
+        const block = await this.readInvocation(invocationRef)
+        await withdrawUnsettledCard(this.create({ coordinator: this.options.toolRuntime.coordinator }), block)
     }
 
     /** The result a manually rejected tool reports to the model, in its handler's own words. */
