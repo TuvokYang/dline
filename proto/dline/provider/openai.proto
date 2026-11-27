@@ -47,4 +47,6 @@ message OpenAiProviderConfig {
   // Hosted server tools the user turned off for this profile. See
   // BaseProviderConfig.disabled_server_tools for the subtraction semantics.
   repeated dline.models.ServerTool disabled_server_tools = 18;
+  // Use the persistent Responses WebSocket transport instead of HTTP streaming.
+  optional bool websocket_enabled = 19;
 }

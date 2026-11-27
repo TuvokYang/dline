@@ -74,7 +74,7 @@ describe("GPT-6.2 bundled metadata", () => {
         const model = openAiCodexModels[id]
         expect(model).toBeDefined()
         expect(model.capabilities?.contextWindow).toBe(context)
-        expect(model.apiFormats).toEqual([ApiFormat.OPENAI_RESPONSES, ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE])
+        expect(model.apiFormats).toEqual([ApiFormat.OPENAI_RESPONSES])
         expect(model.pricing).toBeUndefined()
         // The account listing, not an API catalog copy, declares Codex effort controls.
         expect(model.capabilities?.thinking).toBeUndefined()
@@ -147,6 +147,8 @@ describe("GPT-6.1 Terra", () => {
         }
         const request = create.mock.calls[0]?.[0] as OpenAI.Responses.ResponseCreateParams
         expect(request.model).toBe(id)
+        expect(request.instructions).toBe("stable instructions")
+        expect(request.input).toEqual([{ role: "user", content: [{ type: "input_text", text: "hello" }] }])
         expect(request.tools).toMatchObject([{ type: "function", name: "inspect" }])
         expect(request.reasoning).toEqual(effort === "none" ? { effort } : { effort, summary: "auto" })
         if (effort !== "none") expect(request).not.toHaveProperty("temperature")
@@ -155,7 +157,7 @@ describe("GPT-6.1 Terra", () => {
     it("keeps account-specific limits and reasoning separate from the API catalog", () => {
         const model = openAiCodexModels[id]
         expect(model?.name).toBe("GPT-6.1 Terra")
-        expect(model.apiFormats).toEqual([ApiFormat.OPENAI_RESPONSES, ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE])
+        expect(model.apiFormats).toEqual([ApiFormat.OPENAI_RESPONSES])
         expect(model.pricing).toBeUndefined()
         expect(model.capabilities?.contextWindow).toBeUndefined()
         expect(model.capabilities?.thinking).toBeUndefined()
@@ -181,11 +183,144 @@ describe.each(models)("%s Responses requests", (id) => {
         }
         const request = create.mock.calls[0]?.[0] as OpenAI.Responses.ResponseCreateParams
         expect(request.model).toBe(id)
+        expect(request.instructions).toBeUndefined()
+        expect(request.prompt_cache_options).toBeUndefined()
+        expect(request.input).toEqual([
+            {
+                type: "message",
+                role: "developer",
+                content: [{ type: "input_text", text: "stable instructions" }],
+            },
+            { role: "user", content: [{ type: "input_text", text: "hello" }] },
+        ])
+        expect(JSON.stringify(request)).not.toContain("prompt_cache_breakpoint")
         expect(request.tools).toMatchObject([{ type: "function", name: "inspect" }])
         expect(request.reasoning).toMatchObject({ summary: "auto" })
         expect(request.reasoning?.effort).toBe(reasoning.effort === "max" ? "max" : undefined)
         expect(request).not.toHaveProperty("temperature")
         expect(request).not.toHaveProperty("top_p")
         expect(request).not.toHaveProperty("reasoning_effort")
+    })
+
+    it("uses WebSocket transport for GPT-6.2 initial and continuation turns when websocketEnabled is true", async () => {
+        const handler = new OpenAiHandler({
+            profile: ApiProfile.create({
+                provider: "openai",
+                modelId: id,
+                openai: { apiFormat: ApiFormat.OPENAI_RESPONSES, websocketEnabled: true },
+            }),
+            mode: "act",
+        })
+        const wsCalls: OpenAI.Responses.ResponseCreateParamsStreaming[] = []
+        vi.spyOn(handler as any, "createResponseEventsViaWebsocket").mockImplementation(async (...args: unknown[]) => {
+            const params = args[0] as OpenAI.Responses.ResponseCreateParamsStreaming
+            wsCalls.push(params)
+            return {
+                stream: {
+                    [Symbol.asyncIterator]: async function* () {
+                        yield { type: "response.output_text.delta", delta: `ws-${wsCalls.length}` }
+                        yield { type: "response.completed", response: { id: `resp_${wsCalls.length}`, status: "completed" } }
+                    },
+                },
+                sentAtMs: Date.now(),
+                release: vi.fn(),
+            }
+        })
+        const httpCreate = vi.fn()
+        vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+            responses: { create: httpCreate },
+        })
+
+        // Turn 1: initial turn starts on WebSocket with leading developer system prompt.
+        for await (const _chunk of handler.createMessage("stable instructions", [{ role: "user", content: "turn 1" }])) {
+            // Consume stream.
+        }
+        // Turn 2: continuation inherits developer prompt via previous_response_id.
+        for await (const _chunk of handler.createMessage("stable instructions", [
+            { role: "user", content: "turn 1" },
+            {
+                role: "assistant",
+                content: [{ type: "text", text: "ws-1" }],
+                ts: Date.now(),
+                provider_metadata: { response_id: "resp_1" },
+            },
+            { role: "user", content: "turn 2" },
+        ])) {
+            // Consume stream.
+        }
+
+        expect(httpCreate).not.toHaveBeenCalled()
+        expect(wsCalls).toHaveLength(2)
+        expect(wsCalls[0].instructions).toBeUndefined()
+        expect(wsCalls[0].previous_response_id).toBeUndefined()
+        expect(wsCalls[0].input).toEqual([
+            { type: "message", role: "developer", content: [{ type: "input_text", text: "stable instructions" }] },
+            { role: "user", content: [{ type: "input_text", text: "turn 1" }] },
+        ])
+        expect(wsCalls[1].instructions).toBeUndefined()
+        expect(wsCalls[1].previous_response_id).toBe("resp_1")
+        expect(wsCalls[1].input).toEqual([{ role: "user", content: [{ type: "input_text", text: "turn 2" }] }])
+        expect(wsCalls[1].prompt_cache_key).toBe(wsCalls[0].prompt_cache_key)
+    })
+
+    it("retries full context on a fresh WebSocket after previous_response_not_found and falls back to HTTP on WS failure", async () => {
+        const handler = new OpenAiHandler({
+            profile: ApiProfile.create({
+                provider: "openai",
+                modelId: id,
+                openai: { apiFormat: ApiFormat.OPENAI_RESPONSES, websocketEnabled: true },
+            }),
+            mode: "act",
+        })
+        const wsCalls: OpenAI.Responses.ResponseCreateParamsStreaming[] = []
+        const closeSpy = vi.spyOn(handler as any, "closeResponsesWebsocket")
+        vi.spyOn(handler as any, "createResponseEventsViaWebsocket").mockImplementation(async (...args: unknown[]) => {
+            const params = args[0] as OpenAI.Responses.ResponseCreateParamsStreaming
+            wsCalls.push(params)
+            if (wsCalls.length === 1) {
+                throw Object.assign(new Error("Previous response not found"), { code: "previous_response_not_found" })
+            }
+            throw Object.assign(new Error("WS unsupported"), { code: "websocket_concurrency_limit" })
+        })
+        const httpCreate = vi.fn().mockResolvedValue({
+            [Symbol.asyncIterator]: async function* () {
+                yield { type: "response.output_text.delta", delta: "from-http" }
+            },
+        })
+        vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+            responses: { create: httpCreate },
+        })
+
+        const texts: string[] = []
+        for await (const chunk of handler.createMessage("stable instructions", [
+            { role: "user", content: "turn 1" },
+            {
+                role: "assistant",
+                content: [{ type: "text", text: "answer 1" }],
+                ts: Date.now(),
+                provider_metadata: { response_id: "resp_expired" },
+            },
+            { role: "user", content: "turn 2" },
+        ])) {
+            if (chunk.type === "text") texts.push(chunk.text)
+        }
+
+        expect(texts).toEqual(["from-http"])
+        expect(closeSpy).toHaveBeenCalledTimes(2)
+        expect(wsCalls).toHaveLength(2)
+        expect(wsCalls[0].previous_response_id).toBe("resp_expired")
+        expect(wsCalls[0].input).toEqual([{ role: "user", content: [{ type: "input_text", text: "turn 2" }] }])
+        expect(wsCalls[1].previous_response_id).toBeUndefined()
+        expect(wsCalls[1].input).toEqual([
+            { type: "message", role: "developer", content: [{ type: "input_text", text: "stable instructions" }] },
+            { role: "user", content: [{ type: "input_text", text: "turn 1" }] },
+            { type: "message", role: "assistant", content: [{ type: "output_text", text: "answer 1" }] },
+            { role: "user", content: [{ type: "input_text", text: "turn 2" }] },
+        ])
+        expect(httpCreate).toHaveBeenCalledTimes(1)
+        const httpParams = httpCreate.mock.calls[0]?.[0] as OpenAI.Responses.ResponseCreateParamsStreaming
+        expect(httpParams.previous_response_id).toBeUndefined()
+        expect(httpParams.instructions).toBeUndefined()
+        expect(httpParams.input).toEqual(wsCalls[1].input)
     })
 })

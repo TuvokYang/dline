@@ -18,8 +18,8 @@
 /**
  * Fields shared by every provider's configuration.
  *
- * `websocketEnabled` is included because the Responses transport selects the same
- * WebSocket-mode `ApiFormat` value the other fields are read alongside.
+ * `websocketEnabled` is a provider transport option (independent of `ApiFormat`)
+ * used by providers that support persistent Responses WebSocket connections.
  */
 export type ProviderConfigField =
     | "reasoning"

@@ -12,6 +12,7 @@ import { UIMessageWindowReader } from "@/core/storage/UIMessageWindowReader"
 import { TaskActivityPersistence } from "@/core/task/activity/TaskActivityPersistence"
 import { TaskActivityStore } from "@/core/task/activity/TaskActivityStore"
 import { createInitialTaskState, type DialogInteraction, type TaskState } from "@/core/task/kernel"
+import { TaskPerformanceOwner } from "@/core/task/performance/TaskPerformanceOwner"
 import { FileTaskStateVault, openTaskJournalStores } from "@/core/task/stores"
 import { encodeTaskPayload } from "@/core/task/stores/payload/TaskPayloadCodec"
 import { HistoryDisplaySession } from "../HistoryDisplaySession"
@@ -876,5 +877,74 @@ describe("HistoryDisplaySession", () => {
         expect(close).toHaveBeenCalledOnce()
         expect(session.isLoaded).toBe(false)
         expect(session.getMessages()).toEqual([])
+    })
+
+    it("awaits in-flight metrics hydration when rate history is queried immediately after load", async () => {
+        const taskId = "history-metrics-race"
+        await seedMessages(taskId, [{ ts: 10, type: "say", say: "task", text: "Metrics task" }])
+        let resolveMetrics!: (owner: TaskPerformanceOwner | undefined) => void
+        const query = vi.fn(async () => ({ points: [], degraded: false, truncated: false }))
+        const release = vi.fn(async () => undefined)
+        const fakeOwner = { query, release, getSnapshot: () => undefined } as unknown as TaskPerformanceOwner
+        vi.spyOn(TaskPerformanceOwner, "openExisting").mockReturnValue(
+            new Promise<TaskPerformanceOwner | undefined>((resolve) => {
+                resolveMetrics = resolve
+            }),
+        )
+
+        const session = new HistoryDisplaySession(createHistoryItem(taskId))
+        try {
+            await session.load()
+            const pendingQuery = session.queryRateMetrics({
+                resolution: "hour",
+                startMs: 0,
+                endMs: 3_600_000,
+                maxPoints: 24,
+            })
+            expect(pendingQuery).toBeDefined()
+
+            resolveMetrics(fakeOwner)
+            await expect(pendingQuery).resolves.toEqual({ points: [], degraded: false, truncated: false })
+            expect(query).toHaveBeenCalledOnce()
+        } finally {
+            await session.dispose()
+        }
+        expect(release).toHaveBeenCalledOnce()
+    })
+
+    it("rejects an in-flight metrics query and returns undefined afterward when no metrics exist", async () => {
+        const taskId = "history-metrics-absent"
+        await seedMessages(taskId, [{ ts: 10, type: "say", say: "task", text: "No metrics task" }])
+        let resolveMetrics!: (owner: TaskPerformanceOwner | undefined) => void
+        vi.spyOn(TaskPerformanceOwner, "openExisting").mockReturnValue(
+            new Promise<TaskPerformanceOwner | undefined>((resolve) => {
+                resolveMetrics = resolve
+            }),
+        )
+
+        const session = new HistoryDisplaySession(createHistoryItem(taskId))
+        try {
+            await session.load()
+            const pendingQuery = session.queryRateMetrics({
+                resolution: "hour",
+                startMs: 0,
+                endMs: 3_600_000,
+                maxPoints: 24,
+            })
+            expect(pendingQuery).toBeDefined()
+
+            resolveMetrics(undefined)
+            await expect(pendingQuery).rejects.toThrow("no recorded rate metrics")
+            expect(
+                session.queryRateMetrics({
+                    resolution: "hour",
+                    startMs: 0,
+                    endMs: 3_600_000,
+                    maxPoints: 24,
+                }),
+            ).toBeUndefined()
+        } finally {
+            await session.dispose()
+        }
     })
 })

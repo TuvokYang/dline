@@ -326,6 +326,22 @@ describe("OpenCodeHandler", () => {
             const body = responsesCreate.mock.calls[0]?.[0] as Record<string, unknown>
             expect(body).not.toHaveProperty("tools")
         })
+
+        it("places GPT-6.2 Responses system prompts in a leading developer message", async () => {
+            const handler = createHandler({ apiFormat: ApiFormat.OPENAI_RESPONSES, modelId: "gpt-6.2-sol" })
+            const { responsesCreate } = mockOpenAIClient(handler)
+            responsesCreate.mockResolvedValue(streamOf([]))
+
+            await collect(handler.createMessage("system", userTurn))
+
+            const body = responsesCreate.mock.calls[0]?.[0] as Record<string, unknown>
+            expect(body).not.toHaveProperty("instructions")
+            expect(body.input).toEqual([
+                { type: "message", role: "developer", content: [{ type: "input_text", text: "system" }] },
+                { role: "user", content: [{ type: "input_text", text: "hi" }] },
+            ])
+            expect(JSON.stringify(body)).not.toContain("prompt_cache_breakpoint")
+        })
     })
 
     describe("ANTHROPIC_CHAT", () => {

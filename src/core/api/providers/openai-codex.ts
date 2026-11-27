@@ -26,7 +26,11 @@ import { Logger } from "@/shared/services/Logger"
 import { redactDiagnosticString } from "@/shared/services/logging/safe-diagnostic-value"
 import { AccountUsage, type AccountUsageResetResult, ApiHandler, ApiHandlerContext, type ApiRequestOptions } from "../ApiHandler"
 import { isOutputLimitExceededError, OutputLimitExceededError } from "../stream/OutputLimitExceededError"
-import { projectOpenAIResponsesPromptCache } from "../transform/openai-prompt-cache"
+import {
+    type OpenAIResponsesSystemPromptPlacement,
+    projectOpenAIResponsesPromptCache,
+    usesResponsesDeveloperSystemPrompt,
+} from "../transform/openai-prompt-cache"
 import { convertToOpenAIResponsesInput, declaredResponsesHostedToolNames } from "../transform/openai-response-format"
 import { ApiStream } from "../transform/stream"
 import { handleResponsesApiStreamResponse } from "../utils/responses_api_support"
@@ -75,6 +79,8 @@ export class OpenAiCodexHandler extends ApiHandler {
         fallback: CompactionWireDiagnosticSnapshot
     }
     private activeRuntimeOperations = 0
+    /** Latches if the Codex backend rejects HTTP requests that omit top-level `instructions`. */
+    private codexDeveloperPromptRejected = false
     private readonly runtimeConfig = resolveOpenAiCodexRuntimeConfig()
 
     constructor(private ctx: ApiHandlerContext) {
@@ -273,6 +279,44 @@ export class OpenAiCodexHandler extends ApiHandler {
         return /unauthorized|invalid token|not authenticated|authentication|401/i.test(message)
     }
 
+    private isMissingCodexInstructionsError(error: unknown): boolean {
+        const status = this.safeErrorStatus(error)
+        if (status !== undefined && status !== 400) return false
+        const candidates: string[] = []
+        let isValidationCode = status === 400
+        if (error instanceof Error && error.message) candidates.push(error.message)
+        if (typeof error === "object" && error !== null) {
+            const record = error as {
+                type?: unknown
+                code?: unknown
+                message?: unknown
+                param?: unknown
+                responseBody?: unknown
+                detail?: unknown
+                error?: { type?: unknown; code?: unknown; message?: unknown; param?: unknown }
+            }
+            for (const code of [record.type, record.code, record.error?.type, record.error?.code]) {
+                if (typeof code === "string" && /^(?:invalid_request_error|missing_required_parameter)$/i.test(code)) {
+                    isValidationCode = true
+                }
+            }
+            for (const value of [
+                record.message,
+                record.param,
+                record.responseBody,
+                record.detail,
+                record.error?.message,
+                record.error?.param,
+            ]) {
+                if (typeof value === "string" && value) candidates.push(value)
+            }
+        }
+        if (!isValidationCode) {
+            return candidates.some((text) => /\binstructions\b.*\brequired\b|\bmissing\b.*\binstructions\b/i.test(text))
+        }
+        return candidates.some((text) => /\binstructions\b/i.test(text))
+    }
+
     override supportsServerTool(tool: ServerTool): boolean {
         if (tool !== ServerTool.WEB_SEARCH) {
             return false
@@ -286,8 +330,7 @@ export class OpenAiCodexHandler extends ApiHandler {
     }
 
     private usesResponsesApi(): boolean {
-        const apiFormat = this.getModel().info.apiFormats?.[0]
-        return apiFormat === ApiFormat.OPENAI_RESPONSES || apiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
+        return this.getSelectedApiFormat() === ApiFormat.OPENAI_RESPONSES
     }
 
     /** Keep the account quota snapshot current through the shared polling policy. */
@@ -353,15 +396,51 @@ export class OpenAiCodexHandler extends ApiHandler {
                 )
             }
             const useWebsocketMode = this.shouldUseWebsocketMode(this.getSelectedApiFormat())
-            const { input, previousResponseId } = convertToOpenAIResponsesInput(messages, {
+            const replayHostedTools = declaredResponsesHostedToolNames(options?.serverTools)
+            const { input: primaryInput, previousResponseId } = convertToOpenAIResponsesInput(messages, {
                 usePreviousResponseId: useWebsocketMode,
-                replayHostedTools: declaredResponsesHostedToolNames(options?.serverTools),
+                replayHostedTools,
             })
-            const usePreviousResponseId = useWebsocketMode && !!previousResponseId
+            // When chaining with `previous_response_id`, keep a separate complete conversion so
+            // WebSocket resets, `previous_response_not_found`, and HTTP fallbacks replay the full
+            // conversation history (plus any leading GPT-6.2+ developer prompt) instead of a slice.
+            const fullInput = previousResponseId
+                ? convertToOpenAIResponsesInput(messages, {
+                      usePreviousResponseId: false,
+                      replayHostedTools,
+                  }).input
+                : primaryInput
 
-            // Build request body
-            const requestBody = this.buildRequestBody(model, input, systemPrompt, tools, previousResponseId, options)
-            const fallbackRequestBody = this.buildRequestBody(model, input, systemPrompt, tools, undefined, options)
+            // On GPT-6.2+, place the reusable system prompt in a leading `developer` message on
+            // full-context requests (initial turns and fallbacks) and inherit it across
+            // `previous_response_id` continuations so it is never duplicated into the chain.
+            const resolveSystemPromptPlacement = (
+                chainPreviousResponseId: string | undefined,
+            ): OpenAIResponsesSystemPromptPlacement | undefined => {
+                if (this.codexDeveloperPromptRejected) return "instructions"
+                if (chainPreviousResponseId && usesResponsesDeveloperSystemPrompt(model.id)) {
+                    return "inherited"
+                }
+                return undefined
+            }
+            let requestBody = this.buildRequestBody(
+                model,
+                primaryInput,
+                systemPrompt,
+                tools,
+                previousResponseId,
+                options,
+                resolveSystemPromptPlacement(previousResponseId),
+            )
+            let fallbackRequestBody = this.buildRequestBody(
+                model,
+                fullInput,
+                systemPrompt,
+                tools,
+                undefined,
+                options,
+                resolveSystemPromptPlacement(undefined),
+            )
             this.recordCodexCompactionDiagnostic({
                 requestKind: options?.generation?.purpose === "compaction" ? "compaction" : "ordinary",
                 modelId: model.id,
@@ -371,14 +450,60 @@ export class OpenAiCodexHandler extends ApiHandler {
                 fallbackBody: fallbackRequestBody,
             })
 
-            // Make the request with retry on auth failure
-            for (let attempt = 0; attempt < 2; attempt++) {
+            // Make the request with retry on auth failure or Codex `instructions`-required rejection.
+            let didRefreshAuth = false
+            let didFallbackToInstructions = false
+            while (true) {
+                let emitted = false
                 try {
-                    yield* this.executeRequest(requestBody, fallbackRequestBody, model, credential, usePreviousResponseId, signal)
+                    for await (const chunk of this.executeRequest(
+                        requestBody,
+                        fallbackRequestBody,
+                        model,
+                        credential,
+                        useWebsocketMode,
+                        signal,
+                    )) {
+                        emitted = true
+                        yield chunk
+                    }
                     return
                 } catch (error) {
+                    if (
+                        !signal.aborted &&
+                        !emitted &&
+                        !didFallbackToInstructions &&
+                        requestBody.instructions === undefined &&
+                        this.isMissingCodexInstructionsError(error)
+                    ) {
+                        this.codexDeveloperPromptRejected = true
+                        didFallbackToInstructions = true
+                        Logger.warn(
+                            "OpenAI Codex endpoint rejected omitted top-level instructions; retrying with top-level instructions.",
+                        )
+                        requestBody = this.buildRequestBody(
+                            model,
+                            primaryInput,
+                            systemPrompt,
+                            tools,
+                            previousResponseId,
+                            options,
+                            "instructions",
+                        )
+                        fallbackRequestBody = this.buildRequestBody(
+                            model,
+                            fullInput,
+                            systemPrompt,
+                            tools,
+                            undefined,
+                            options,
+                            "instructions",
+                        )
+                        continue
+                    }
                     if (!signal.aborted && this.isAuthenticationFailure(error)) {
-                        if (attempt === 0) {
+                        if (!didRefreshAuth) {
+                            didRefreshAuth = true
                             const refreshed = await openAiCodexOAuthManager.forceRefreshCredentialContext(this.profileId)
                             signal.throwIfAborted()
                             if (refreshed) {
@@ -400,8 +525,8 @@ export class OpenAiCodexHandler extends ApiHandler {
         }
     }
 
-    private shouldUseWebsocketMode(apiFormat?: ApiFormat): boolean {
-        return apiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
+    private shouldUseWebsocketMode(apiFormat: ApiFormat = this.getSelectedApiFormat()): boolean {
+        return apiFormat === ApiFormat.OPENAI_RESPONSES && this.config?.websocketEnabled === true
     }
 
     private buildRequestBody(
@@ -411,6 +536,7 @@ export class OpenAiCodexHandler extends ApiHandler {
         tools?: ChatCompletionTool[],
         previousResponseId?: string,
         options?: ApiRequestOptions,
+        systemPromptPlacement?: OpenAIResponsesSystemPromptPlacement,
     ): any {
         const reasoning = resolveCodexReasoning(model.info.capabilities, this.reasoningConfig)
         const includeReasoning = reasoning.enabled
@@ -432,6 +558,7 @@ export class OpenAiCodexHandler extends ApiHandler {
             input: formattedInput as OpenAI.Responses.ResponseInput,
             tools: responseTools,
             taskNamespace: options?.taskNamespace,
+            ...(systemPromptPlacement ? { systemPromptPlacement } : {}),
         })
         const include = [
             ...(includeReasoning ? ["reasoning.encrypted_content"] : []),
@@ -480,7 +607,12 @@ export class OpenAiCodexHandler extends ApiHandler {
                 return
             } catch (error) {
                 // A cancelled request neither falls back nor closes the socket a newer request may own.
-                if (signal.aborted || isOutputLimitExceededError(error) || this.isAuthenticationFailure(error)) {
+                if (
+                    signal.aborted ||
+                    isOutputLimitExceededError(error) ||
+                    this.isAuthenticationFailure(error) ||
+                    (requestBody.instructions === undefined && this.isMissingCodexInstructionsError(error))
+                ) {
                     throw error
                 }
                 const diagnostic = this.toProviderError(error)
@@ -490,6 +622,10 @@ export class OpenAiCodexHandler extends ApiHandler {
                 this.closeResponsesWebsocket()
             }
         }
+
+        // HTTP cannot resolve a WebSocket-local `previous_response_id` (especially with `store: false`),
+        // so falling back from WebSocket to HTTP must send the complete fallback body.
+        const httpRequestBody = useWebsocketMode ? fallbackRequestBody : requestBody
 
         // Try using OpenAI SDK first
         try {
@@ -504,7 +640,7 @@ export class OpenAiCodexHandler extends ApiHandler {
                 })
 
             const sentAtMs = Date.now()
-            const stream = (await (client as any).responses.create(requestBody, {
+            const stream = (await (client as any).responses.create(httpRequestBody, {
                 signal,
                 headers: codexHeaders,
             })) as AsyncIterable<any>
@@ -515,11 +651,16 @@ export class OpenAiCodexHandler extends ApiHandler {
 
             yield* this.handleResponseEvents(stream, model, sentAtMs)
         } catch (error) {
-            if (signal.aborted || isOutputLimitExceededError(error) || this.isAuthenticationFailure(error)) {
+            if (
+                signal.aborted ||
+                isOutputLimitExceededError(error) ||
+                this.isAuthenticationFailure(error) ||
+                (httpRequestBody.instructions === undefined && this.isMissingCodexInstructionsError(error))
+            ) {
                 throw error
             }
             // Fallback to manual SSE via fetch
-            yield* this.makeCodexRequest(requestBody, model, credential, signal)
+            yield* this.makeCodexRequest(httpRequestBody, model, credential, signal)
         }
     }
 
@@ -531,11 +672,25 @@ export class OpenAiCodexHandler extends ApiHandler {
         model: { id: string; info: ModelInfo },
         signal: AbortSignal,
     ): ApiStream {
+        let emitted = false
         try {
-            yield* this.createResponseEventsViaWebsocket(primaryParams, credential, codexHeaders, signal, model)
+            for await (const chunk of this.createResponseEventsViaWebsocket(
+                primaryParams,
+                credential,
+                codexHeaders,
+                signal,
+                model,
+            )) {
+                emitted = true
+                yield chunk
+            }
         } catch (error) {
             // A cancelled request must not open a fresh socket or close the one a newer request owns.
-            if (!signal.aborted && this.shouldRetryWebsocketWithFullContext(error, !!primaryParams.previous_response_id)) {
+            if (
+                !signal.aborted &&
+                !emitted &&
+                this.shouldRetryWebsocketWithFullContext(error, !!primaryParams.previous_response_id)
+            ) {
                 Logger.log(
                     "Retrying Codex websocket response with full context after previous_response_not_found or socket reset",
                 )
@@ -561,7 +716,11 @@ export class OpenAiCodexHandler extends ApiHandler {
                 ? (error as { code: string }).code
                 : undefined
 
-        if (hadPreviousResponseId && errorCode === "previous_response_not_found") {
+        if (
+            hadPreviousResponseId &&
+            (errorCode === "previous_response_not_found" ||
+                /previous_response_not_found|previous response.*not found/i.test(this.getProviderErrorMessage(error)))
+        ) {
             return true
         }
         if (errorCode === "websocket_closed" || errorCode === "websocket_error") {

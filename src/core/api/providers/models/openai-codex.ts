@@ -12,7 +12,7 @@ import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
 
 /** Provider baseline used for newly listed Codex models that are not in the bundled catalog yet. */
 export const openAiCodexModelInfoSaneDefaults: Omit<ModelInfo, "id"> = {
-    apiFormats: [ApiFormat.OPENAI_RESPONSES, ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE],
+    apiFormats: [ApiFormat.OPENAI_RESPONSES],
     capabilities: {
         supportsTools: true,
         tools: [ServerTool.WEB_SEARCH],
@@ -50,7 +50,7 @@ export const openAiCodexModels: Record<string, ModelInfo> = {
     "gpt-6.1-terra": {
         id: "gpt-6.1-terra",
         name: "GPT-6.1 Terra",
-        apiFormats: [ApiFormat.OPENAI_RESPONSES, ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE],
+        apiFormats: [ApiFormat.OPENAI_RESPONSES],
         capabilities: {
             supportsTools: true,
             tools: [ServerTool.WEB_SEARCH],

@@ -11,7 +11,8 @@ enum ApiFormat {
   OPENAI_CHAT = 2;
   R1_CHAT = 3;
   OPENAI_RESPONSES = 4;
-  OPENAI_RESPONSES_WEBSOCKET_MODE = 5;
+  reserved 5;
+  reserved "OPENAI_RESPONSES_WEBSOCKET_MODE";
 }
 
 /** Thinking configuration for models that support thinking/reasoning. */

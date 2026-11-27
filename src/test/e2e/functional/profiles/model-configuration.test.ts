@@ -781,9 +781,12 @@ e2e(
         expect(initialPrices.outputPrice).toBeGreaterThanOrEqual(0)
 
         const addPricingTier = card.getByRole("button", { name: "Add Pricing Tier", exact: true })
+        await expect(addPricingTier).toHaveCount(0)
+        await pricingMode.click()
+        await sidebar.getByRole("option", { name: "By context size", exact: true }).click()
+        await expect(pricingMode).toHaveText("By context size")
         await expect(addPricingTier).toBeVisible()
         await addPricingTier.click()
-        await expect(pricingMode).toHaveText("By context size")
         await expect(removePricingTier).toHaveCount(initialBandCount + 1)
         await expect(card.getByRole("textbox", { name: "Up To Input Tokens", exact: true })).toHaveValue("128000")
         await expect(card.getByText("No upper limit", { exact: true })).toHaveCount(1)

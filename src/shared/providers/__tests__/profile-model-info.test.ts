@@ -188,7 +188,7 @@ describe("resolveProfileModelInfo", () => {
         expect(result.capabilities?.supportsReasoning).to.equal(true)
     })
 
-    it("applies Codex capability overrides and prioritizes the selected Responses transport", () => {
+    it("applies Codex capability overrides without encoding WebSocket transport into apiFormats", () => {
         const profile = ApiProfile.create({
             provider: "openai-codex",
             modelId: "gpt-6-astra",
@@ -206,7 +206,7 @@ describe("resolveProfileModelInfo", () => {
 
         expect(result.capabilities?.contextWindow).to.equal(400_000)
         expect(result.capabilities?.maxTokens).to.equal(64_000)
-        expect(result.apiFormats).to.deep.equal([ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE, ApiFormat.OPENAI_RESPONSES])
+        expect(result.apiFormats).to.deep.equal([ApiFormat.OPENAI_RESPONSES])
     })
 
     it("uses the selected tier window instead of a standalone context override for custom models", () => {

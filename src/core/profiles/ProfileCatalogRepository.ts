@@ -184,6 +184,14 @@ export class ProfileCatalogRepository {
         await this.operationQueue
     }
 
+    async dispose(): Promise<void> {
+        const watcher = this.watcher
+        this.watcher = undefined
+        this.listeners.clear()
+        if (watcher) await watcher.close()
+        await this.operationQueue
+    }
+
     private enqueue<T>(operation: () => Promise<T>): Promise<T> {
         const result = this.operationQueue.then(operation)
         this.operationQueue = result.then(
@@ -206,7 +214,13 @@ export class ProfileCatalogRepository {
                 Logger.error("[ProfileCatalogRepository] Failed to reconcile external commit:", error)
             })
         }
-        watcher.on("add", reconcile).on("change", reconcile).on("unlink", reconcile)
+        watcher
+            .on("add", reconcile)
+            .on("change", reconcile)
+            .on("unlink", reconcile)
+            .on("error", (error) => {
+                Logger.warn("[ProfileCatalogRepository] Watcher error:", error)
+            })
         await new Promise<void>((resolve) => {
             watcher.once("ready", resolve)
             watcher.once("error", () => resolve())

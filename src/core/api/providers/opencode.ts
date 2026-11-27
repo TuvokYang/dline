@@ -35,6 +35,7 @@ import type { ClineTool } from "@/shared/tools"
 import { type AccountUsage, ApiHandler, type ApiHandlerContext, type ApiRequestOptions, type UsageQuota } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { convertToOpenAiMessages } from "../transform/openai-format"
+import { prependDeveloperSystemPrompt, usesResponsesDeveloperSystemPrompt } from "../transform/openai-prompt-cache"
 import { convertToOpenAIResponsesInput } from "../transform/openai-response-format"
 import type { ApiStream } from "../transform/stream"
 import { getOpenAIToolParams, ToolCallProcessor } from "../transform/tool-call-processor"
@@ -487,11 +488,13 @@ export class OpenCodeHandler extends ApiHandler {
         })
 
         const sentAtMs = Date.now()
+        const rawInput = convertToOpenAIResponsesInput(messages, { usePreviousResponseId: false }).input
+        const useDeveloperPrompt = usesResponsesDeveloperSystemPrompt(model.id)
         const stream = await client.responses.create(
             {
                 model: model.id,
-                instructions: systemPrompt,
-                input: convertToOpenAIResponsesInput(messages, { usePreviousResponseId: false }).input,
+                ...(useDeveloperPrompt ? {} : { instructions: systemPrompt }),
+                input: useDeveloperPrompt ? prependDeveloperSystemPrompt(systemPrompt, rawInput) : rawInput,
                 ...(maxTokens ? { max_output_tokens: maxTokens } : {}),
                 ...(reasoning ? { reasoning } : {}),
                 stream: true,

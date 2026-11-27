@@ -66,3 +66,10 @@ export function getProfileCatalogRepository(): Promise<ProfileCatalogRepository>
     void initialization.catch(() => repositories.delete(filePath))
     return initialization
 }
+
+/** Close every cached process-local Profile Catalog repository and its file watcher. */
+export async function disposeProfileCatalogRepositories(): Promise<void> {
+    const entries = [...repositories.values()]
+    repositories.clear()
+    await Promise.all(entries.map((entry) => entry.then((repository) => repository.dispose()).catch(() => undefined)))
+}

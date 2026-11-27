@@ -12,6 +12,7 @@ import { withRetry } from "../retry"
 import { sanitizeAnthropicMessages } from "../transform/anthropic-format"
 import { convertAnthropicMessageToGemini } from "../transform/gemini-format"
 import { convertToOpenAiMessages } from "../transform/openai-format"
+import { prependDeveloperSystemPrompt, usesResponsesDeveloperSystemPrompt } from "../transform/openai-prompt-cache"
 import { ApiStream } from "../transform/stream"
 import { resolveGeminiThinking } from "./gemini/reasoning"
 
@@ -256,10 +257,11 @@ export class AIhubmixHandler extends ApiHandler {
         })
 
         const sentAtMs = Date.now()
+        const useDeveloperPrompt = usesResponsesDeveloperSystemPrompt(modelId)
         const stream = await (client as any).responses.stream({
             model: modelId,
-            instructions: systemPrompt,
-            input,
+            ...(useDeveloperPrompt ? {} : { instructions: systemPrompt }),
+            input: useDeveloperPrompt ? prependDeveloperSystemPrompt(systemPrompt, input) : input,
         })
 
         for await (const event of stream as any) {

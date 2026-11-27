@@ -6,6 +6,46 @@ const PROMPT_CACHE_KEY_PREFIX = "dline_cache_"
 const PROMPT_CACHE_KEY_IDENTIFIER_LENGTH = 32
 
 export type OpenAIPromptCacheProjectionMode = "automatic" | "explicit"
+export type OpenAIResponsesSystemPromptPlacement = "instructions" | "developer" | "inherited"
+
+const GPT_VERSION_PATTERN = /^gpt-(\d+)(?:\.(\d+))?(?:$|[-_:@])/i
+
+/**
+ * Whether an OpenAI Responses model requires reusable system prompts in a
+ * leading `developer` input item rather than top-level `instructions`.
+ *
+ * Starting with GPT-6.2 (2026-11-17), the Responses API appends top-level
+ * `instructions` after `input` and excludes it from prefix prompt caching.
+ * Earlier models (GPT-6.1 and below) keep top-level `instructions`.
+ */
+export function usesResponsesDeveloperSystemPrompt(modelId: string): boolean {
+    const bare = modelId.trim().split("/").at(-1) ?? ""
+    const match = GPT_VERSION_PATTERN.exec(bare)
+    if (!match) return false
+    const major = Number(match[1])
+    const minor = Number(match[2] ?? 0)
+    return major > 6 || (major === 6 && minor >= 2)
+}
+
+/** Prepend a reusable system prompt as a leading Responses `developer` message. */
+export function prependDeveloperSystemPrompt(
+    systemPrompt: string,
+    input: OpenAI.Responses.ResponseInput,
+    explicitBreakpoint = false,
+): OpenAI.Responses.ResponseInput {
+    const developerMessage: OpenAI.Responses.EasyInputMessage = {
+        type: "message",
+        role: "developer",
+        content: [
+            {
+                type: "input_text",
+                text: systemPrompt,
+                ...(explicitBreakpoint ? { prompt_cache_breakpoint: EXPLICIT_BREAKPOINT } : {}),
+            },
+        ],
+    }
+    return [developerMessage, ...input]
+}
 
 interface PromptCacheIdentityInput {
     readonly modelId: string
@@ -36,6 +76,8 @@ export interface OpenAIResponsesPromptCacheInput {
     readonly tools: readonly OpenAI.Responses.Tool[]
     readonly taskNamespace?: string
     readonly mode?: OpenAIPromptCacheProjectionMode
+    /** Override automatic placement (for example keeping WebSocket mode on `instructions`). */
+    readonly systemPromptPlacement?: OpenAIResponsesSystemPromptPlacement
 }
 
 export interface OpenAIResponsesPromptCacheProjection {
@@ -144,28 +186,32 @@ export function projectOpenAIResponsesPromptCache(input: OpenAIResponsesPromptCa
         taskNamespace: input.taskNamespace,
         tools: input.tools,
     })
-    if (input.mode !== "explicit") {
+    if (input.systemPromptPlacement === "inherited") {
         return {
-            instructions: input.systemPrompt,
             input: input.input,
             promptCacheKey,
         }
     }
-
-    const developerMessage: OpenAI.Responses.EasyInputMessage = {
-        type: "message",
-        role: "developer",
-        content: [
-            {
-                type: "input_text",
-                text: input.systemPrompt,
-                prompt_cache_breakpoint: EXPLICIT_BREAKPOINT,
-            },
-        ],
+    if (input.mode === "explicit") {
+        return {
+            input: prependDeveloperSystemPrompt(input.systemPrompt, input.input, true),
+            promptCacheKey,
+            promptCacheOptions: { mode: "explicit" },
+        }
     }
+
+    const placement =
+        input.systemPromptPlacement ?? (usesResponsesDeveloperSystemPrompt(input.modelId) ? "developer" : "instructions")
+    if (placement === "developer") {
+        return {
+            input: prependDeveloperSystemPrompt(input.systemPrompt, input.input, false),
+            promptCacheKey,
+        }
+    }
+
     return {
-        input: [developerMessage, ...input.input],
+        instructions: input.systemPrompt,
+        input: input.input,
         promptCacheKey,
-        promptCacheOptions: { mode: "explicit" },
     }
 }

@@ -61,7 +61,7 @@ describe("OpenAiCodexModelSource", () => {
         expect(Object.keys(models)).toEqual(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-6-new"])
         expect(models["gpt-5.6-sol"]).toMatchObject({
             id: "gpt-5.6-sol",
-            apiFormats: [ApiFormat.OPENAI_RESPONSES, ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE],
+            apiFormats: [ApiFormat.OPENAI_RESPONSES],
             capabilities: { contextWindow: 372_000, supportsPromptCache: true, supportsReasoning: true },
         })
         expect(models).not.toHaveProperty("gpt-reserve")

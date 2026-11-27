@@ -387,7 +387,6 @@ describe("provider tool projector", () => {
         for (const [apiFormat, shape] of [
             [ApiFormat.OPENAI_CHAT, "openai"],
             [ApiFormat.OPENAI_RESPONSES, "openai"],
-            [ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE, "openai"],
             [ApiFormat.R1_CHAT, "openai"],
             [ApiFormat.ANTHROPIC_CHAT, "anthropic"],
             [ApiFormat.GEMINI_CHAT, "google"],

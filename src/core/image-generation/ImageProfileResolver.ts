@@ -81,7 +81,7 @@ export class ImageProfileResolver {
                 const selectedApiFormat =
                     apiProfile.openai?.apiFormat ?? openAiEndpointToApiFormat(apiProfile.openai?.apiEndpoint)
                 const apiFormat = resolveApiFormat(selectedApiFormat, apiProfile.modelInfo, ApiFormat.OPENAI_CHAT)
-                if (apiFormat !== ApiFormat.OPENAI_RESPONSES && apiFormat !== ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE) {
+                if (apiFormat !== ApiFormat.OPENAI_RESPONSES) {
                     return unavailable("Responses image generation requires the OpenAI Responses transport.")
                 }
             }

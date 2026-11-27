@@ -40,7 +40,6 @@ describe("resolveServerToolPlan", () => {
     })
     it.each([
         ApiFormat.OPENAI_RESPONSES,
-        ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE,
         ApiFormat.ANTHROPIC_CHAT,
     ])("activates declared web search for supported API format %s", (apiFormat) => {
         const plan = resolveServerToolPlan({ capabilities: { tools: [ServerTool.WEB_SEARCH] } }, apiFormat)
@@ -126,11 +125,8 @@ describe("resolveServerToolPlan", () => {
         })
     })
 
-    it.each([
-        ApiFormat.OPENAI_RESPONSES,
-        ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE,
-    ])("projects web search as a Responses hosted tool for format %s", (apiFormat) => {
-        const projection = projectServerTools(hostedPlan(apiFormat))
+    it("projects web search as a Responses hosted tool for OPENAI_RESPONSES", () => {
+        const projection = projectServerTools(hostedPlan(ApiFormat.OPENAI_RESPONSES))
 
         expect(projection).toEqual({ declarations: [{ type: "web_search" }] })
         expect(projection.declarations[0]).not.toHaveProperty("function")

@@ -148,7 +148,6 @@ export const zhCN = {
     "settings.ui.dify.modelHelp": "模型选择由 Dify 应用配置管理。",
     "settings.ui.asksage.enterUrl": "输入 AskSage API URL…",
     "settings.ui.oca.baseUrl": "OCA 基础 URL",
-    "settings.ui.codex.websocket": "使用 WebSocket 传输",
     "settings.ui.deepseek.protocolHelp": "DeepSeek 通过每种协议提供所有模型；此选项只改变传输格式，不改变价格。",
     "settings.ui.loading": "加载中…",
     "settings.ui.litellm.thinkingHelp": "Sonnet-4、o3-mini、Deepseek R1 等模型支持扩展思考。",

@@ -800,4 +800,70 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
         expect(create).toHaveBeenCalledOnce()
         expect(harness.taskState.checkpointManagerErrorMessage).toContain("Git must be installed")
     })
+
+    it("re-resolves the completion message index after an unsettled row is withdrawn during commitFiles", async () => {
+        const completionTs = 200
+        let messages: UiMessage[] = [
+            { ts: 100, type: "say", say: "checkpoint_created", lastCheckpointHash: ["start-hash"] },
+            { ts: 150, type: "say", say: "text", text: "streaming", partial: true },
+            { ts: completionTs, type: "say", say: "completion_result", text: "Done" },
+        ]
+        const commit = vi.fn(async () => {
+            // Simulate withdrawUnsettledCard replacing clineMessages with a shorter array while committing.
+            messages = messages.filter((message) => message.ts !== 150)
+            return "completion-hash"
+        })
+        const tracker = { commit, setTaskFileTracker: vi.fn() } as unknown as CheckpointTracker
+        const updateClineMessage = vi.fn(async (index: number, updates: Partial<UiMessage>) => {
+            if (index < 0 || index >= messages.length) throw new Error(`Invalid message index: ${index}`)
+            Object.assign(messages[index], updates)
+        })
+        const flushMessageUpdate = vi.fn(async (index: number) => {
+            if (index < 0 || index >= messages.length) throw new Error(`Invalid message index: ${index}`)
+        })
+        const publishMessage = vi.fn(async (_message: UiMessage) => undefined)
+        const canonicalCapture = vi.fn(async () => undefined)
+        const manager = createTaskCheckpointManager(
+            { taskId: "task-1", controller: {} } as never,
+            { enableCheckpoints: true },
+            {
+                fileContextTracker: {},
+                diffViewProvider: {},
+                messageStateHandler: {
+                    get clineMessages() {
+                        return messages
+                    },
+                    get durableClineMessages() {
+                        return messages
+                    },
+                    updateClineMessage,
+                    flushMessageUpdate,
+                },
+                taskState: { taskId: "task-1" },
+                workspaceManager: { getPrimaryRoot: () => ({ path: "C:/workspace" }) },
+                canonicalCheckpoint: {
+                    capture: canonicalCapture,
+                    restore: vi.fn(),
+                    advancedSince: vi.fn(async () => false),
+                },
+            } as never,
+            {
+                postStateToWebview: vi.fn().mockResolvedValue(undefined),
+                publishMessage,
+            } as never,
+            { checkpointTracker: tracker },
+        )
+
+        await manager.saveCheckpoint(true, completionTs)
+
+        expect(updateClineMessage).toHaveBeenCalledWith(1, {
+            lastCheckpointHash: ["completion-hash"],
+            checkpointWorkspaceRoots: ["C:/workspace"],
+        })
+        expect(flushMessageUpdate).toHaveBeenCalledWith(1)
+        expect(publishMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ ts: completionTs, lastCheckpointHash: ["completion-hash"] }),
+        )
+        expect(canonicalCapture).toHaveBeenCalledWith(expect.objectContaining({ messageTs: completionTs }))
+    })
 })

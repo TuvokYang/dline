@@ -162,7 +162,7 @@ export function resolveProfileOverrides(profile: ApiProfile): ProviderModelOverr
     return providerKey ? readOverrides(profile[providerKey]) : {}
 }
 
-/** Read the API protocol and optional Responses transport selected by a provider Profile. */
+/** Read the API protocol selected by a provider Profile. */
 function resolveProfileApiFormat(profile: ApiProfile): ApiFormat | undefined {
     const providerKey = PROFILE_PROVIDER_KEYS[profile.provider]
     if (!providerKey) return undefined
@@ -171,16 +171,10 @@ function resolveProfileApiFormat(profile: ApiProfile): ApiFormat | undefined {
     if (!isObject(config)) return undefined
 
     const configuredValue = readProviderConfigField(config, "apiFormat")
-    const configured = typeof configuredValue === "number" ? (configuredValue as ApiFormat) : undefined
-    const websocketEnabled = readProviderConfigField(config, "websocketEnabled")
-    const baseFormat = configured === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE ? ApiFormat.OPENAI_RESPONSES : configured
-    if (websocketEnabled === true && (baseFormat === undefined || baseFormat === ApiFormat.OPENAI_RESPONSES)) {
-        return ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
+    if (typeof configuredValue === "number" && configuredValue !== ApiFormat.UNRECOGNIZED) {
+        return configuredValue as ApiFormat
     }
-    if (websocketEnabled === undefined && configured === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE) {
-        return ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
-    }
-    return baseFormat
+    return undefined
 }
 
 /**

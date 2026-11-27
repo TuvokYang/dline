@@ -323,7 +323,7 @@ describe("OpenAiCodexHandler hosted Web Search", () => {
 
         expect(model.info.capabilities?.contextWindow).to.equal(400_000)
         expect(model.info.capabilities?.maxTokens).to.equal(64_000)
-        expect(model.info.apiFormats?.[0]).to.equal(ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE)
+        expect(model.info.apiFormats?.[0]).to.equal(ApiFormat.OPENAI_RESPONSES)
         expect((handler as any).shouldUseWebsocketMode(model.info.apiFormats?.[0])).to.equal(true)
     })
 
@@ -1012,5 +1012,349 @@ describe("OpenAiCodexHandler hosted Web Search", () => {
         expect(send.mock.calls).to.have.length(0)
         expect((handler as any).websocketRequestOwner).to.equal(undefined)
         expect([...listeners.values()].every((entries) => entries.size === 0)).to.equal(true)
+    })
+
+    it("places GPT-6.2 HTTP system prompts in a leading developer message without breakpoints", async () => {
+        const handler = new OpenAiCodexHandler({
+            profile: ApiProfile.create({
+                id: "profile-gpt62-http",
+                provider: "openai-codex",
+                modelId: "gpt-6.2-astra",
+                modelInfo: {
+                    id: "gpt-6.2-astra",
+                    apiFormats: [ApiFormat.OPENAI_RESPONSES],
+                },
+            }),
+            mode: "act",
+        })
+        vi.spyOn(openAiCodexOAuthManager, "getCredentialContext").mockResolvedValue({
+            accessToken: "access-token",
+            expires: 1_900_000_000_000,
+            accountId: "account-a",
+        })
+        const bodies: Record<string, unknown>[] = []
+        vi.spyOn(handler as any, "executeRequest").mockImplementation(async function* (...args: unknown[]) {
+            bodies.push(args[0] as Record<string, unknown>)
+        })
+
+        await collect(handler.createMessage("stable system", [{ role: "user", content: "hello" }]))
+
+        expect(bodies).to.have.length(1)
+        expect(bodies[0]).not.to.have.property("instructions")
+        expect(bodies[0]).not.to.have.property("prompt_cache_options")
+        expect(bodies[0].input).to.deep.equal([
+            { type: "message", role: "developer", content: [{ type: "input_text", text: "stable system" }] },
+            { role: "user", content: [{ type: "input_text", text: "hello" }] },
+        ])
+        expect(JSON.stringify(bodies[0])).not.to.contain("prompt_cache_breakpoint")
+    })
+
+    it("uses WebSocket on GPT-6.2 initial turns and inherits developer prompt on continuations with full fallback", async () => {
+        const handler = new OpenAiCodexHandler({
+            profile: ApiProfile.create({
+                id: "profile-gpt62-ws",
+                provider: "openai-codex",
+                modelId: "gpt-6.2-astra",
+                modelInfo: {
+                    id: "gpt-6.2-astra",
+                    apiFormats: [ApiFormat.OPENAI_RESPONSES],
+                },
+                openaiCodex: {
+                    apiFormat: ApiFormat.OPENAI_RESPONSES,
+                    websocketEnabled: true,
+                },
+            }),
+            mode: "act",
+        })
+        vi.spyOn(openAiCodexOAuthManager, "getCredentialContext").mockResolvedValue({
+            accessToken: "access-token",
+            expires: 1_900_000_000_000,
+            accountId: "account-a",
+        })
+        const calls: Array<{
+            primary: Record<string, unknown>
+            fallback: Record<string, unknown>
+            useWebsocketMode: boolean
+        }> = []
+        vi.spyOn(handler as any, "executeRequest").mockImplementation(async function* (...args: unknown[]) {
+            calls.push({
+                primary: args[0] as Record<string, unknown>,
+                fallback: args[1] as Record<string, unknown>,
+                useWebsocketMode: args[4] as boolean,
+            })
+        })
+
+        // Turn 1: no previous_response_id -> starts on WebSocket with leading developer system prompt.
+        await collect(handler.createMessage("stable system", [{ role: "user", content: "turn 1" }]))
+        // Turn 2: chains from resp_1 -> incremental input without duplicating developer prompt,
+        // while fallbackRequestBody carries full history + leading developer prompt without previous_response_id.
+        await collect(
+            handler.createMessage("stable system", [
+                { role: "user", content: "turn 1" },
+                {
+                    role: "assistant",
+                    content: [{ type: "text", text: "answer 1" }],
+                    ts: Date.now(),
+                    provider_metadata: { response_id: "resp_1" },
+                },
+                { role: "user", content: "turn 2" },
+            ]),
+        )
+
+        expect(calls).to.have.length(2)
+        expect(calls[0].useWebsocketMode).to.equal(true)
+        expect(calls[0].primary).not.to.have.property("instructions")
+        expect(calls[0].primary).not.to.have.property("previous_response_id")
+        expect(calls[0].primary.input).to.deep.equal([
+            { type: "message", role: "developer", content: [{ type: "input_text", text: "stable system" }] },
+            { role: "user", content: [{ type: "input_text", text: "turn 1" }] },
+        ])
+        expect(calls[0].fallback).to.deep.equal(calls[0].primary)
+
+        expect(calls[1].useWebsocketMode).to.equal(true)
+        expect(calls[1].primary).not.to.have.property("instructions")
+        expect(calls[1].primary.previous_response_id).to.equal("resp_1")
+        expect(calls[1].primary.input).to.deep.equal([{ role: "user", content: [{ type: "input_text", text: "turn 2" }] }])
+        expect(calls[1].primary.prompt_cache_key).to.equal(calls[0].primary.prompt_cache_key)
+
+        expect(calls[1].fallback).not.to.have.property("instructions")
+        expect(calls[1].fallback).not.to.have.property("previous_response_id")
+        expect(calls[1].fallback.prompt_cache_key).to.equal(calls[0].primary.prompt_cache_key)
+        expect(calls[1].fallback.input).to.deep.equal([
+            { type: "message", role: "developer", content: [{ type: "input_text", text: "stable system" }] },
+            { role: "user", content: [{ type: "input_text", text: "turn 1" }] },
+            { type: "message", role: "assistant", content: [{ type: "output_text", text: "answer 1" }] },
+            { role: "user", content: [{ type: "input_text", text: "turn 2" }] },
+        ])
+        expect(JSON.stringify(calls[1])).not.to.contain("prompt_cache_breakpoint")
+    })
+
+    it("keeps full conversation history in WebSocket fallbackRequestBody for non-GPT-6.2 models too", async () => {
+        const handler = new OpenAiCodexHandler({
+            profile: ApiProfile.create({
+                id: "profile-gpt56-ws",
+                provider: "openai-codex",
+                modelId: "gpt-5.6-sol",
+                modelInfo: {
+                    id: "gpt-5.6-sol",
+                    apiFormats: [ApiFormat.OPENAI_RESPONSES],
+                },
+                openaiCodex: {
+                    apiFormat: ApiFormat.OPENAI_RESPONSES,
+                    websocketEnabled: true,
+                },
+            }),
+            mode: "act",
+        })
+        vi.spyOn(openAiCodexOAuthManager, "getCredentialContext").mockResolvedValue({
+            accessToken: "access-token",
+            expires: 1_900_000_000_000,
+            accountId: "account-a",
+        })
+        let primary: Record<string, unknown> | undefined
+        let fallback: Record<string, unknown> | undefined
+        vi.spyOn(handler as any, "executeRequest").mockImplementation(async function* (...args: unknown[]) {
+            primary = args[0] as Record<string, unknown>
+            fallback = args[1] as Record<string, unknown>
+        })
+
+        await collect(
+            handler.createMessage("stable system", [
+                { role: "user", content: "turn 1" },
+                {
+                    role: "assistant",
+                    content: [{ type: "text", text: "answer 1" }],
+                    ts: Date.now(),
+                    provider_metadata: { response_id: "resp_1" },
+                },
+                { role: "user", content: "turn 2" },
+            ]),
+        )
+
+        expect(primary?.instructions).to.equal("stable system")
+        expect(primary?.previous_response_id).to.equal("resp_1")
+        expect(primary?.input).to.deep.equal([{ role: "user", content: [{ type: "input_text", text: "turn 2" }] }])
+        expect(fallback?.instructions).to.equal("stable system")
+        expect(fallback).not.to.have.property("previous_response_id")
+        expect(fallback?.input).to.deep.equal([
+            { role: "user", content: [{ type: "input_text", text: "turn 1" }] },
+            { type: "message", role: "assistant", content: [{ type: "output_text", text: "answer 1" }] },
+            { role: "user", content: [{ type: "input_text", text: "turn 2" }] },
+        ])
+    })
+
+    it("retries full context over HTTP when WebSocket transport fails", async () => {
+        const handler = createHandler()
+        const credential = { accessToken: "access-token", expires: 1_900_000_000_000, accountId: "account-a" }
+        const primaryBody = {
+            model: "gpt-6.2-astra",
+            previous_response_id: "resp_1",
+            input: [{ role: "user", content: [{ type: "input_text", text: "turn 2" }] }],
+        }
+        const fallbackBody = {
+            model: "gpt-6.2-astra",
+            input: [
+                { type: "message", role: "developer", content: [{ type: "input_text", text: "stable system" }] },
+                { role: "user", content: [{ type: "input_text", text: "turn 1" }] },
+                { role: "user", content: [{ type: "input_text", text: "turn 2" }] },
+            ],
+        }
+        vi.spyOn(handler as any, "createResponseStreamWebsocket").mockImplementation(async function* () {
+            throw Object.assign(new Error("Websocket response.create is already in progress"), {
+                code: "websocket_concurrency_limit",
+            })
+        })
+        const create = vi.fn().mockResolvedValue(eventStream([{ type: "response.output_text.delta", delta: "from-http" }]))
+        ;(handler as any).client = { responses: { create } }
+
+        const chunks = await collect(
+            (handler as any).executeRequest(
+                primaryBody,
+                fallbackBody,
+                handler.getModel(),
+                credential,
+                true,
+                new AbortController().signal,
+            ),
+        )
+
+        expect(chunks.map((chunk: any) => ({ type: chunk.type, text: chunk.text }))).to.deep.equal([
+            { type: "text", text: "from-http" },
+        ])
+        expect(create.mock.calls).to.have.length(1)
+        expect(create.mock.calls[0]?.[0]).to.deep.equal(fallbackBody)
+    })
+
+    it("retries WebSocket previous_response_not_found on a fresh socket with full fallback context", async () => {
+        const handler = createHandler()
+        const credential = { accessToken: "access-token", expires: 1_900_000_000_000, accountId: "account-a" }
+        const primaryBody = {
+            model: "gpt-6.2-astra",
+            previous_response_id: "resp_expired",
+            input: [{ role: "user", content: [{ type: "input_text", text: "turn 2" }] }],
+        }
+        const fallbackBody = {
+            model: "gpt-6.2-astra",
+            input: [
+                { type: "message", role: "developer", content: [{ type: "input_text", text: "stable system" }] },
+                { role: "user", content: [{ type: "input_text", text: "turn 1" }] },
+                { role: "user", content: [{ type: "input_text", text: "turn 2" }] },
+            ],
+        }
+        const closeSpy = vi.spyOn(handler as any, "closeResponsesWebsocket")
+        const wsCalls: unknown[] = []
+        vi.spyOn(handler as any, "createResponseEventsViaWebsocket").mockImplementation(async function* (...args: unknown[]) {
+            wsCalls.push(args[0])
+            if (wsCalls.length === 1) {
+                throw Object.assign(new Error("Previous response not found"), { code: "previous_response_not_found" })
+            }
+            yield { type: "text", text: "recovered-ws" }
+        })
+
+        const chunks = await collect(
+            (handler as any).createResponseStreamWebsocket(
+                primaryBody,
+                fallbackBody,
+                credential,
+                {},
+                handler.getModel(),
+                new AbortController().signal,
+            ),
+        )
+
+        expect(chunks).to.deep.equal([{ type: "text", text: "recovered-ws" }])
+        expect(closeSpy.mock.calls).to.have.length(1)
+        expect(wsCalls).to.deep.equal([primaryBody, fallbackBody])
+    })
+
+    it("falls back and latches top-level instructions when Codex WebSocket rejects omitting instructions", async () => {
+        const handler = new OpenAiCodexHandler({
+            profile: ApiProfile.create({
+                id: "profile-gpt62-ws-fallback",
+                provider: "openai-codex",
+                modelId: "gpt-6.2-sol",
+                modelInfo: {
+                    id: "gpt-6.2-sol",
+                    apiFormats: [ApiFormat.OPENAI_RESPONSES],
+                },
+                openaiCodex: {
+                    apiFormat: ApiFormat.OPENAI_RESPONSES,
+                    websocketEnabled: true,
+                },
+            }),
+            mode: "act",
+        })
+        vi.spyOn(openAiCodexOAuthManager, "getCredentialContext").mockResolvedValue({
+            accessToken: "access-token",
+            expires: 1_900_000_000_000,
+            accountId: "account-a",
+        })
+        const wsCalls: Record<string, unknown>[] = []
+        vi.spyOn(handler as any, "createResponseEventsViaWebsocket").mockImplementation(async function* (...args: unknown[]) {
+            const body = args[0] as Record<string, unknown>
+            wsCalls.push(body)
+            if (wsCalls.length === 1) {
+                throw Object.assign(new Error("Instructions are required"), { type: "invalid_request_error" })
+            }
+            yield { type: "text", text: "ws-ok" }
+        })
+        const httpSpy = vi.fn()
+        ;(handler as any).client = { responses: { create: httpSpy } }
+
+        const chunks = await collect(handler.createMessage("stable system", [{ role: "user", content: "turn 1" }]))
+
+        expect(chunks).to.deep.equal([{ type: "text", text: "ws-ok" }])
+        expect(httpSpy.mock.calls).to.have.length(0)
+        expect(wsCalls).to.have.length(2)
+        expect(wsCalls[0]).not.to.have.property("instructions")
+        expect(wsCalls[1].instructions).to.equal("stable system")
+        expect(wsCalls[1].input).to.deep.equal([{ role: "user", content: [{ type: "input_text", text: "turn 1" }] }])
+    })
+
+    it("falls back and latches top-level instructions if Codex HTTP rejects omitting instructions", async () => {
+        const handler = new OpenAiCodexHandler({
+            profile: ApiProfile.create({
+                id: "profile-gpt62-fallback",
+                provider: "openai-codex",
+                modelId: "gpt-6.2-sol",
+                modelInfo: {
+                    id: "gpt-6.2-sol",
+                    apiFormats: [ApiFormat.OPENAI_RESPONSES],
+                },
+            }),
+            mode: "act",
+        })
+        vi.spyOn(openAiCodexOAuthManager, "getCredentialContext").mockResolvedValue({
+            accessToken: "access-token",
+            expires: 1_900_000_000_000,
+            accountId: "account-a",
+        })
+        const seenBodies: Record<string, unknown>[] = []
+        vi.spyOn(handler as any, "executeRequest").mockImplementation(async function* (...args: unknown[]) {
+            const body = args[0] as Record<string, unknown>
+            seenBodies.push(body)
+            if (seenBodies.length === 1) {
+                throw Object.assign(new Error("Instructions are required"), { status: 400 })
+            }
+            yield { type: "text", text: "ok" }
+        })
+
+        const firstChunks = await collect(handler.createMessage("stable system", [{ role: "user", content: "turn 1" }]))
+        const secondChunks = await collect(handler.createMessage("stable system", [{ role: "user", content: "turn 2" }]))
+
+        expect(firstChunks).to.deep.equal([{ type: "text", text: "ok" }])
+        expect(secondChunks).to.deep.equal([{ type: "text", text: "ok" }])
+        expect(seenBodies).to.have.length(3)
+        expect(seenBodies[0]).not.to.have.property("instructions")
+        expect((seenBodies[0].input as unknown[])[0]).to.deep.equal({
+            type: "message",
+            role: "developer",
+            content: [{ type: "input_text", text: "stable system" }],
+        })
+        expect(seenBodies[1].instructions).to.equal("stable system")
+        expect(seenBodies[1].input).to.deep.equal([{ role: "user", content: [{ type: "input_text", text: "turn 1" }] }])
+        // Subsequent turns skip the rejected developer-only attempt.
+        expect(seenBodies[2].instructions).to.equal("stable system")
+        expect(seenBodies[2].input).to.deep.equal([{ role: "user", content: [{ type: "input_text", text: "turn 2" }] }])
     })
 })
