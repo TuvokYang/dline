@@ -231,17 +231,34 @@ describe("OpenAI prompt cache projection", () => {
 
     it("honors explicit systemPromptPlacement overrides on GPT-6.2+ models", () => {
         const input: OpenAI.Responses.ResponseInput = [{ role: "user", content: [{ type: "input_text", text: "dynamic" }] }]
-        const projection = projectOpenAIResponsesPromptCache({
+        const developer = projectOpenAIResponsesPromptCache({
+            modelId: "gpt-6.2-astra",
+            systemPrompt: "stable system",
+            input,
+            tools: [],
+        })
+        const instructions = projectOpenAIResponsesPromptCache({
             modelId: "gpt-6.2-astra",
             systemPrompt: "stable system",
             input,
             tools: [],
             systemPromptPlacement: "instructions",
         })
+        const inherited = projectOpenAIResponsesPromptCache({
+            modelId: "gpt-6.2-astra",
+            systemPrompt: "stable system",
+            input,
+            tools: [],
+            systemPromptPlacement: "inherited",
+        })
 
-        expect(projection.instructions).to.equal("stable system")
-        expect(projection.input).to.equal(input)
-        expect(projection.promptCacheOptions).to.equal(undefined)
+        expect(instructions.instructions).to.equal("stable system")
+        expect(instructions.input).to.equal(input)
+        expect(instructions.promptCacheOptions).to.equal(undefined)
+        expect(inherited.instructions).to.equal(undefined)
+        expect(inherited.input).to.equal(input)
+        expect(inherited.promptCacheOptions).to.equal(undefined)
+        expect(inherited.promptCacheKey).to.equal(developer.promptCacheKey)
     })
 
     it("keeps GPT-6.1 Responses models on top-level instructions", () => {

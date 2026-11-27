@@ -6,7 +6,7 @@ const PROMPT_CACHE_KEY_PREFIX = "dline_cache_"
 const PROMPT_CACHE_KEY_IDENTIFIER_LENGTH = 32
 
 export type OpenAIPromptCacheProjectionMode = "automatic" | "explicit"
-export type OpenAIResponsesSystemPromptPlacement = "instructions" | "developer"
+export type OpenAIResponsesSystemPromptPlacement = "instructions" | "developer" | "inherited"
 
 const GPT_VERSION_PATTERN = /^gpt-(\d+)(?:\.(\d+))?(?:$|[-_:@])/i
 
@@ -196,6 +196,12 @@ export function projectOpenAIResponsesPromptCache(input: OpenAIResponsesPromptCa
 
     const placement =
         input.systemPromptPlacement ?? (usesResponsesDeveloperSystemPrompt(input.modelId) ? "developer" : "instructions")
+    if (placement === "inherited") {
+        return {
+            input: input.input,
+            promptCacheKey,
+        }
+    }
     if (placement === "developer") {
         return {
             input: prependDeveloperSystemPrompt(input.systemPrompt, input.input, false),
