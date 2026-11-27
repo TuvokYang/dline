@@ -279,6 +279,37 @@ https://github.com/microsoft/vscode-webview-ui-toolkit-samples/blob/main/default
 https://github.com/KumarVariable/vscode-extension-sidebar-html/blob/master/src/customSidebarViewProvider.ts
 */
 
+/** Project the current visible input queue for either an active task or history display. */
+async function projectInputQueueForSurface(
+    task: ActiveTaskSession | undefined,
+    historyDisplay: HistoryDisplaySession | undefined,
+) {
+    return task?.inputQueue ? [...(await task.inputQueue.project())] : [...(historyDisplay?.getInputQueue() ?? [])]
+}
+
+/**
+ * Lightweight in-memory fingerprint of the visible canonical input queue.
+ *
+ * Allows committed task-view patches to include `inputQueue` only when a
+ * durable transition changed visible queue entries (enqueue, edit, reorder,
+ * reserve, consume, release), without doing payload I/O on unchanged turns.
+ */
+function readCanonicalInputQueueSignature(session: ActiveTaskSession | undefined): string | undefined {
+    if (!session || typeof session.state !== "function") return undefined
+    const entries = session
+        .state()
+        .intake.queued.filter(
+            (entry) =>
+                entry.source === "user" &&
+                entry.queue !== undefined &&
+                (entry.state === "accepted" || entry.state === "released"),
+        )
+        .sort((left, right) => left.sequence - right.sequence)
+    return `${session.taskId}:${entries
+        .map((entry) => `${entry.entryId}:${entry.payloadRef}:${entry.mode}:${entry.queue?.editing ? 1 : 0}:${entry.sequence}`)
+        .join("|")}`
+}
+
 export class Controller {
     /**
      * One backfill scan per process.
@@ -2953,11 +2984,11 @@ export class Controller {
         // state builds that active streaming/compaction patches repeatedly make stale.
         if (options?.projection === "input-queue") {
             this.stateManager.setActiveTaskId(this.getCurrentTaskId())
-            const inputQueue = await this.projectCurrentInputQueue()
+            const inputQueue = await projectInputQueueForSurface(this.task, this.historyDisplaySession)
             if (this.uiDetached || this.disposed) return
             const stateRevision = ++this.nextStateRevision
             this.latestStateRevision = Math.max(this.latestStateRevision, stateRevision)
-            this.publishedInputQueueSignature = this.readCanonicalInputQueueSignature()
+            this.publishedInputQueueSignature = readCanonicalInputQueueSignature(this.task)
             await sendStatePatch(
                 this,
                 {
@@ -3040,37 +3071,6 @@ export class Controller {
         this.taskViewPatchScheduledAt = Date.now()
     }
 
-    /** Project the current visible input queue for either an active task or history display. */
-    private async projectCurrentInputQueue() {
-        return this.task ? [...(await this.task.inputQueue.project())] : [...(this.historyDisplaySession?.getInputQueue() ?? [])]
-    }
-
-    /**
-     * Lightweight in-memory fingerprint of the visible canonical input queue.
-     *
-     * Allows committed task-view patches to include `inputQueue` only when a
-     * durable transition changed visible queue entries (enqueue, edit, reorder,
-     * reserve, consume, release), without doing payload I/O on unchanged turns.
-     */
-    private readCanonicalInputQueueSignature(): string | undefined {
-        const session = this.task
-        if (!session || typeof session.state !== "function") return undefined
-        const entries = session
-            .state()
-            .intake.queued.filter(
-                (entry) =>
-                    entry.source === "user" &&
-                    entry.queue !== undefined &&
-                    (entry.state === "accepted" || entry.state === "released"),
-            )
-            .sort((left, right) => left.sequence - right.sequence)
-        return `${session.taskId}:${entries
-            .map(
-                (entry) => `${entry.entryId}:${entry.payloadRef}:${entry.mode}:${entry.queue?.editing ? 1 : 0}:${entry.sequence}`,
-            )
-            .join("|")}`
-    }
-
     /** Publish the interaction-critical Task view without paying for a full ExtensionState build. */
     async postTaskViewPatchToWebview(options?: { syncInputQueue?: boolean }): Promise<void> {
         if (this.uiDetached || this.disposed || !this.getCurrentTaskId()) {
@@ -3089,11 +3089,11 @@ export class Controller {
         this.stateManager.setActiveTaskId(this.getCurrentTaskId())
         let inputQueue: ExtensionState["inputQueue"] | undefined
         if (options?.syncInputQueue && this.task?.inputQueue) {
-            const signature = this.readCanonicalInputQueueSignature()
+            const signature = readCanonicalInputQueueSignature(this.task)
             if (signature !== undefined && signature !== this.publishedInputQueueSignature) {
                 inputQueue = [...(await this.task.inputQueue.project())]
                 if (this.uiDetached || this.disposed || !this.getCurrentTaskId()) return
-                this.publishedInputQueueSignature = this.readCanonicalInputQueueSignature()
+                this.publishedInputQueueSignature = readCanonicalInputQueueSignature(this.task)
             }
         }
         const stateRevision = ++this.nextStateRevision
@@ -3585,8 +3585,8 @@ export class Controller {
              * builds state instead of throwing.
              */
             inputQueue: await (async () => {
-                const projected = await this.projectCurrentInputQueue()
-                this.publishedInputQueueSignature = this.readCanonicalInputQueueSignature()
+                const projected = await projectInputQueueForSurface(this.task, this.historyDisplaySession)
+                this.publishedInputQueueSignature = readCanonicalInputQueueSignature(this.task)
                 return projected
             })(),
             transitionDraft: this.task ? await projectTransitionDraft(this.task) : undefined,
