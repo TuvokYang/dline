@@ -1,4 +1,4 @@
-import { type ReactElement, useId } from "react"
+import { type ReactElement, useCallback, useId, useRef, useState } from "react"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { TOOLTIP_OPEN_DELAY_MS } from "@/components/ui/tooltip"
 import { useUiTranslation } from "@/i18n/UiLanguageProvider"
@@ -12,10 +12,67 @@ interface TaskHoverProps {
 export function TaskHover({ taskId, text, children }: TaskHoverProps) {
     const { t } = useUiTranslation()
     const detailsId = useId()
+    const [open, setOpen] = useState(false)
+    const suppressNextFocusOpen = useRef(false)
+    const keyboardFocused = useRef(false)
+    const pointerMovedInTrigger = useRef(false)
+
+    const handleOpenChange = useCallback((nextOpen: boolean) => {
+        if (!nextOpen) {
+            setOpen(false)
+            return
+        }
+        // Reject hover opens caused by layout shifts sliding the trigger under a
+        // stationary cursor and focus opens caused by clicking the header to toggle it.
+        if (suppressNextFocusOpen.current) {
+            suppressNextFocusOpen.current = false
+            return
+        }
+        if (!keyboardFocused.current && !pointerMovedInTrigger.current) {
+            return
+        }
+        setOpen(true)
+    }, [])
 
     return (
-        <HoverCard openDelay={TOOLTIP_OPEN_DELAY_MS}>
-            <HoverCardTrigger aria-describedby={detailsId} aria-label={t("chatInput.header.details")} asChild tabIndex={0}>
+        <HoverCard onOpenChange={handleOpenChange} open={open} openDelay={TOOLTIP_OPEN_DELAY_MS}>
+            <HoverCardTrigger
+                aria-describedby={detailsId}
+                aria-label={t("chatInput.header.details")}
+                asChild
+                onBlur={() => {
+                    keyboardFocused.current = false
+                    suppressNextFocusOpen.current = false
+                }}
+                onClick={() => {
+                    suppressNextFocusOpen.current = false
+                    pointerMovedInTrigger.current = false
+                    setOpen(false)
+                }}
+                onFocus={() => {
+                    if (suppressNextFocusOpen.current) {
+                        keyboardFocused.current = false
+                        return
+                    }
+                    keyboardFocused.current = true
+                }}
+                onPointerDown={() => {
+                    suppressNextFocusOpen.current = true
+                    keyboardFocused.current = false
+                    pointerMovedInTrigger.current = false
+                    setOpen(false)
+                }}
+                onPointerEnter={() => {
+                    pointerMovedInTrigger.current = false
+                }}
+                onPointerLeave={() => {
+                    pointerMovedInTrigger.current = false
+                    suppressNextFocusOpen.current = false
+                }}
+                onPointerMove={() => {
+                    pointerMovedInTrigger.current = true
+                }}
+                tabIndex={0}>
                 {children}
             </HoverCardTrigger>
             <HoverCardContent

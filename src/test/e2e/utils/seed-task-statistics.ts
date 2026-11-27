@@ -84,11 +84,18 @@ export async function seedTaskStatistics(
             0,
             (latestRound?.executionDurationMs ?? 0) - (latestRound?.providerDurationMs ?? 0),
         )
-        const latestProviderCompletedAtMs = currentHourStartMs - latestExecutionTailMs - 1
+        // Near the top of an hour, a point in the previous hour falls out of the rolling
+        // 60-minute window as soon as minute :59 arrives or the clock crosses :00. Keep the
+        // newest round inside the current hour in the final 10 minutes so minute-resolution
+        // assertions remain deterministic across hour boundaries.
+        const nearHourBoundary = nowMs - currentHourStartMs >= 50 * MINUTE_MS
+        const latestProviderCompletedAtMs = nearHourBoundary
+            ? nowMs - 2 * MINUTE_MS - latestExecutionTailMs
+            : currentHourStartMs - latestExecutionTailMs - 1
         const completedAtMs = SEEDED_ROUNDS.map((_, index) =>
             index === latestRoundIndex
                 ? latestProviderCompletedAtMs
-                : currentHourStartMs - (3 - index) * HOUR_MS + 30 * MINUTE_MS,
+                : currentHourStartMs - (nearHourBoundary ? 2 - index : 3 - index) * HOUR_MS + 30 * MINUTE_MS,
         )
         const rounds = SEEDED_ROUNDS.map((input, index) => createRound(taskId, index, completedAtMs[index] ?? 0, input))
         const executions = rounds.map((round, index) => createExecution(round, SEEDED_ROUNDS[index]?.executionDurationMs ?? 1))

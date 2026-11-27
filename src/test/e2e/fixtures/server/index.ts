@@ -1029,12 +1029,13 @@ export class ClineApiServerMock {
 
             // Helper to read request body
             const readBody = (): Promise<string> => {
-                return new Promise((resolve) => {
-                    let body = ""
+                return new Promise((resolve, reject) => {
+                    const chunks: Buffer[] = []
                     req.on("data", (chunk) => {
-                        body += chunk.toString()
+                        chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk)
                     })
-                    req.on("end", () => resolve(body))
+                    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")))
+                    req.on("error", reject)
                 })
             }
 

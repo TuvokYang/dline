@@ -874,27 +874,30 @@ export class DefaultProductionProviderService implements ProductionProviderServi
         // text. Running both would execute it twice, so a text copy gives way to
         // the native call in the place the reply wrote it: dropping it and
         // appending the native one would reorder calls that depend on each other.
-        const nativeCalls = new Map<string, PendingNativeTool>()
+        const nativeByKey = new Map<string, PendingNativeTool[]>()
         for (const tool of tools.values()) {
             if (tool.name.length === 0) continue
             const key = duplicateCallKey(tool.name, tool.arguments)
-            if (!nativeCalls.has(key)) nativeCalls.set(key, tool)
+            const queue = nativeByKey.get(key)
+            if (queue) queue.push(tool)
+            else nativeByKey.set(key, [tool])
         }
         const merged: ToolUse[] = []
-        const placed = new Set<string>()
+        const placedNative = new Set<PendingNativeTool>()
         for (const tool of written.tools) {
             const key = duplicateCallKey(tool.name, tool.params)
-            const native = nativeCalls.get(key)
+            const native = nativeByKey.get(key)?.shift()
             if (!native) {
                 merged.push(tool)
                 continue
             }
-            if (placed.has(key)) continue
-            placed.add(key)
-            nativeCalls.delete(key)
+            placedNative.add(native)
             merged.push(this.nativeToolUse(native))
         }
-        for (const tool of nativeCalls.values()) merged.push(this.nativeToolUse(tool))
+        for (const tool of tools.values()) {
+            if (tool.name.length === 0 || placedNative.has(tool)) continue
+            merged.push(this.nativeToolUse(tool))
+        }
         return { text: written.text, tools: merged }
     }
 

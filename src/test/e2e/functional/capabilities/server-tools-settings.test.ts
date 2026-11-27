@@ -194,23 +194,26 @@ e2e(
             }
 
             await openModelConfiguration(openAiCard)
-            // This profile runs a free-form model id, so no registry entry declares
-            // hosted Web Search. The switch must stay unavailable instead of letting
-            // the profile invent a capability the model does not have.
+            // This profile runs a free-form model id whose catalog entry leaves hosted
+            // Web Search undeclared. The switch stays unchecked by default and lets the
+            // user explicitly opt in to try hosted Web Search for this model.
             const openAiHostedWebSearch = capabilityCheckbox(openAiCard, "Use hosted Web Search")
-            await expect(openAiHostedWebSearch).toContainText("not offered by this model")
-            await expect(openAiHostedWebSearch).toHaveAttribute("disabled", "")
-            await setCapability(openAiCard, "Supports Browser Actions", true)
-            await waitForProfile(
-                dlineDir,
-                E2E_PROFILE_NAMES.persistence,
-                (profile) => profile.openai?.capabilities?.supportsBrowserAction === true,
-            )
+            await expect(openAiHostedWebSearch).toContainText("undeclared; try for this model")
+            await expect(openAiHostedWebSearch).not.toHaveAttribute("disabled", "")
+            await expect
+                .poll(() => openAiHostedWebSearch.evaluate((element) => Boolean((element as HTMLInputElement).checked)))
+                .toBe(false)
             await setCapability(openAiCard, "Supports Images", false)
             await waitForProfile(
                 dlineDir,
                 E2E_PROFILE_NAMES.persistence,
                 (profile) => profile.openai?.capabilities?.supportsImages === false,
+            )
+            await setCapability(openAiCard, "Supports Browser Actions", true)
+            await waitForProfile(
+                dlineDir,
+                E2E_PROFILE_NAMES.persistence,
+                (profile) => profile.openai?.capabilities?.supportsBrowserAction === true,
             )
 
             // Capability editing is available for every model, and the hosted switch
@@ -256,10 +259,13 @@ e2e(
             await expect(reopenedOpenAiCard.getByRole("combobox", { name: "Web Tools mode" })).toHaveValue("3")
             await openModelConfiguration(reopenedOpenAiCard)
             await expectCapabilities(reopenedOpenAiCard, {
+                "Use hosted Web Search": false,
                 "Supports Browser Actions": true,
                 "Supports Images": false,
             })
-            await expect(capabilityCheckbox(reopenedOpenAiCard, "Use hosted Web Search")).toHaveAttribute("disabled", "")
+            const reopenedOpenAiHostedWebSearch = capabilityCheckbox(reopenedOpenAiCard, "Use hosted Web Search")
+            await expect(reopenedOpenAiHostedWebSearch).toContainText("undeclared; try for this model")
+            await expect(reopenedOpenAiHostedWebSearch).not.toHaveAttribute("disabled", "")
 
             const reopenedAnthropicCard = await openProfileEditor(reopened.sidebar, E2E_PROFILE_NAMES.mockAnthropic)
             // The custom model ID switch stays available; merging the two pickers

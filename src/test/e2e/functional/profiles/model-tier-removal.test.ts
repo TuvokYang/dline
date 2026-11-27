@@ -133,9 +133,10 @@ e2e(
             const reopenedProfile = await readProfile(dlineDir)
             expect(reopenedProfile.anthropic?.pricing).toBeUndefined()
             expect(reopenedProfile.anthropic?.pricingTiersEnabled).toBeUndefined()
+            await expect(reopenedCard.getByRole("combobox", { name: "Pricing Mode", exact: true })).toHaveText("Flat rate")
             await expect(reopenedCard.getByRole("button", { name: "Remove Pricing Tier" })).toHaveCount(0)
             await expect(reopenedCard.getByRole("button", { name: "Add Context Tier" })).toBeVisible()
-            await expect(reopenedCard.getByRole("button", { name: "Add Pricing Tier" })).toBeVisible()
+            await expect(reopenedCard.getByRole("button", { name: "Add Pricing Tier" })).toHaveCount(0)
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
         } finally {
             await reopenedApp?.close()

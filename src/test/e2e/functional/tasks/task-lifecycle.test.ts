@@ -1172,6 +1172,7 @@ e2e(
                 })
                 .toBe(true)
             await closeCurrentTask(sidebar)
+            await waitForTaskRelease(dlineDocsDir, taskId)
 
             const [uiBefore, apiBefore] = await Promise.all([
                 readTaskUiMessagesText(dlineDocsDir, taskId),

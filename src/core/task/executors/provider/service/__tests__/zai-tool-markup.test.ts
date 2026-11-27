@@ -136,4 +136,57 @@ describe("ZAI tool markup recovery", () => {
         const final = finalOf(chunks)
         expect(final.blocks.map((block) => block.invocation.toolName)).toEqual(["read_file", "write_to_file"])
     })
+
+    it("preserves distinct parallel native calls with identical names and arguments in arrival order", async () => {
+        const firstRead: ApiProviderStreamChunk = {
+            type: "tool_calls",
+            function_id: "call-1",
+            phase: "completed",
+            tool_index: 0,
+            tool_call: { function: { name: "read_file", arguments: '{"path":"README.md"}' } },
+        }
+        const listCall: ApiProviderStreamChunk = {
+            type: "tool_calls",
+            function_id: "call-2",
+            phase: "completed",
+            tool_index: 1,
+            tool_call: { function: { name: "list_files", arguments: '{"path":"."}' } },
+        }
+        const secondRead: ApiProviderStreamChunk = {
+            type: "tool_calls",
+            function_id: "call-3",
+            phase: "completed",
+            tool_index: 2,
+            tool_call: { function: { name: "read_file", arguments: '{"path":"README.md"}' } },
+        }
+        const chunks = await run([firstRead, listCall, secondRead], "gpt-5.6")
+
+        const final = finalOf(chunks)
+        expect(final.blocks.map((block) => ({ tool: block.invocation.toolName, id: block.invocation.functionId }))).toEqual([
+            { tool: "read_file", id: "call-1" },
+            { tool: "list_files", id: "call-2" },
+            { tool: "read_file", id: "call-3" },
+        ])
+    })
+
+    it("matches one GLM text copy to one native call while keeping a second identical native call", async () => {
+        const firstRead: ApiProviderStreamChunk = {
+            type: "tool_calls",
+            function_id: "call-1",
+            phase: "completed",
+            tool_index: 0,
+            tool_call: { function: { name: "read_file", arguments: '{"path":"a.ts"}' } },
+        }
+        const secondRead: ApiProviderStreamChunk = {
+            type: "tool_calls",
+            function_id: "call-2",
+            phase: "completed",
+            tool_index: 1,
+            tool_call: { function: { name: "read_file", arguments: '{"path":"a.ts"}' } },
+        }
+        const chunks = await run([firstRead, secondRead, text(GLM_CALL)], "glm-5.3")
+
+        const final = finalOf(chunks)
+        expect(final.blocks.map((block) => block.invocation.functionId)).toEqual(["call-1", "call-2"])
+    })
 })

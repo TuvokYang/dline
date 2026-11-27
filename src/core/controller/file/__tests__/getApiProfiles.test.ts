@@ -3,6 +3,7 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { ModelRegistry } from "@core/model-registry/ModelRegistry"
+import { disposeProfileCatalogRepositories } from "@core/profiles/profile-catalog-runtime"
 import { getAllApiKeys, resetAllStores } from "@core/storage/secrets"
 import { EmptyRequest } from "@shared/proto/dline/common"
 import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
@@ -517,6 +518,8 @@ describe("getApiProfiles", () => {
             process.env.DLINE_DIR = originalDlineDir
         }
         resetAllStores()
+        await disposeProfileCatalogRepositories()
+        await (ModelRegistry as any).instance?.dispose()
         ;(ModelRegistry as any).instance = undefined
         // readApiProfiles schedules a fire-and-forget Catalog repair that can still be creating its
         // lock or temp file here; on Windows that races the recursive removal with ENOTEMPTY/EBUSY.
@@ -1456,5 +1459,67 @@ describe("getApiProfiles", () => {
         invalidateApiProfilesReadCache(storedProfilesPath)
         expect(readApiProfiles()[0].id).to.equal("profile-1")
         expect(readFileSpy.mock.calls).to.have.length(2)
+    })
+
+    it("preserves custom modelInfo without an explicit id while discarding modelInfo tagged for another model", async () => {
+        const settingsDir = path.join(process.env.DLINE_DIR!, "data", "settings")
+        const storedProfilesPath = path.join(settingsDir, "api_profiles.json")
+        await fs.mkdir(settingsDir, { recursive: true })
+        await fs.writeFile(
+            storedProfilesPath,
+            JSON.stringify([
+                {
+                    id: "custom-no-id",
+                    name: "Custom without modelInfo.id",
+                    provider: "openai",
+                    modelId: "dline-custom-model",
+                    usedFor: ["act", "plan"],
+                    enabled: true,
+                    modelInfo: {
+                        capabilities: {
+                            supportsReasoning: true,
+                            thinking: { supported: true, mode: "effort", effortLevels: ["low", "high"] },
+                        },
+                    },
+                },
+                {
+                    id: "custom-mismatched-id",
+                    name: "Custom with stale modelInfo.id",
+                    provider: "openai",
+                    modelId: "new-custom-model",
+                    usedFor: ["act"],
+                    enabled: true,
+                    modelInfo: {
+                        id: "old-custom-model",
+                        capabilities: { supportsReasoning: true },
+                    },
+                },
+            ]),
+            "utf8",
+        )
+        const controller = {
+            stateManager: {
+                getApiConfiguration: () => ({}),
+                setGlobalState: vi.fn(),
+                flushPendingState: vi.fn().mockResolvedValue(undefined),
+            },
+            postStateToWebview: vi.fn(),
+        } as any
+
+        const response = await getApiProfiles(controller, EmptyRequest.create({}))
+        const preserved = response.profiles.find((profile) => profile.id === "custom-no-id")
+        expect(preserved?.modelInfo?.capabilities?.supportsReasoning).to.equal(true)
+        expect(preserved?.modelInfo?.capabilities?.thinking?.effortLevels).to.deep.equal(["low", "high"])
+
+        await updateApiProfiles(controller, { profiles: response.profiles, clearApiKeyProfileIds: [] })
+        const stored = JSON.parse(await fs.readFile(storedProfilesPath, "utf8")) as Array<{
+            id: string
+            modelInfo?: { capabilities?: { supportsReasoning?: boolean; thinking?: { effortLevels?: string[] } } }
+        }>
+        expect(stored.find((profile) => profile.id === "custom-no-id")?.modelInfo?.capabilities?.supportsReasoning).to.equal(true)
+        expect(
+            stored.find((profile) => profile.id === "custom-no-id")?.modelInfo?.capabilities?.thinking?.effortLevels,
+        ).to.deep.equal(["low", "high"])
+        expect(stored.find((profile) => profile.id === "custom-mismatched-id")?.modelInfo).to.equal(undefined)
     })
 })

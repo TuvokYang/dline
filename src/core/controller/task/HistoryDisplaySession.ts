@@ -86,6 +86,8 @@ export class HistoryDisplaySession {
     private messageReader?: UIMessageWindowReader
     /** The metrics a past run recorded, read so the header and chart show them before resume. */
     private performance?: TaskPerformanceOwner
+    /** In-flight metrics hydration, awaited by rate-history queries arriving before maintenance finishes. */
+    private metricsReady?: Promise<TaskPerformanceOwner | undefined>
     private focusChainHistory: string | null = null
     private messages: UiMessage[] = []
     private durableMessageCount = 0
@@ -198,7 +200,16 @@ export class HistoryDisplaySession {
 
     /** Query the recorded rate history, or undefined when the task never recorded any. */
     queryRateMetrics(query: TaskRateMetricsQuery): Promise<TaskRateMetricsQueryResult> | undefined {
-        return this.performance?.query(query)
+        if (this.disposed) return undefined
+        if (this.performance) return this.performance.query(query)
+        const pending = this.metricsReady
+        if (!pending) return undefined
+        return pending.then((performance) => {
+            if (this.disposed || !performance) {
+                throw new Error("Task has no recorded rate metrics")
+            }
+            return performance.query(query)
+        })
     }
 
     getMessages(): readonly UiMessage[] {
@@ -400,12 +411,19 @@ export class HistoryDisplaySession {
             // Metrics are loaded here, after the first frame, because their read is
             // proportional to the task's whole request history. A resumed surface
             // redraws once they arrive; nothing the first frame draws needs them.
-            const performance = await this.openMetrics()
-            if (this.disposed) {
-                await performance?.release()
-                return
-            }
-            this.performance = performance
+            const loadingMetrics = this.openMetrics().then(async (performance) => {
+                if (this.disposed) {
+                    await performance?.release()
+                    return undefined
+                }
+                this.performance = performance
+                return performance
+            })
+            this.metricsReady = loadingMetrics
+            const performance = await loadingMetrics.finally(() => {
+                if (this.metricsReady === loadingMetrics) this.metricsReady = undefined
+            })
+            if (this.disposed) return
             if (performance) await options?.onMaintained?.([])
 
             // Give an immediate Resume priority before any large activity query can

@@ -162,7 +162,7 @@ async function expectToolbarControlsWithinDialog(dialog: Locator): Promise<void>
     }
 }
 
-async function assertDefaultTokenCacheChart(dialog: Locator): Promise<void> {
+async function assertDefaultTokenCacheChart(dialog: Locator, latestActiveHourStartMs: number): Promise<void> {
     const toolbar = dialog.getByRole("toolbar", { name: "Task metrics controls" })
     await expect(toolbar).toBeVisible()
     const resolution = dialog.getByRole("combobox", { name: "History resolution", exact: true })
@@ -192,7 +192,8 @@ async function assertDefaultTokenCacheChart(dialog: Locator): Promise<void> {
     await expect(inputPoints).toHaveCount(24)
     await expect(inputPoints.first()).toHaveAttribute("data-value", "0")
     await expect(inputPoints.first()).toHaveAttribute("cx", "62")
-    await expect(inputPoints.last()).toHaveAttribute("data-value", "0")
+    const lastBucketStartMs = Number(await inputPoints.last().getAttribute("data-bucket-start-ms"))
+    await expect(inputPoints.last()).toHaveAttribute("data-value", lastBucketStartMs === latestActiveHourStartMs ? "1600" : "0")
     await expect(inputPoints.last()).toHaveAttribute("cx", "666")
 
     for (const [key, color] of [
@@ -266,15 +267,16 @@ e2e(
             await expect(taskHeaderToggle).toHaveCount(1)
             const initialHeaderLabel = await taskHeaderToggle.getAttribute("aria-label")
             if (!initialHeaderLabel) throw new Error("Expected the Task header expansion label before opening rate history")
+            const activeHourStarts = seeded.completedAtMs.map((completedAtMs) => Math.floor(completedAtMs / HOUR_MS) * HOUR_MS)
+            const latestActiveHourStartMs = activeHourStarts[activeHourStarts.length - 1] ?? 0
             await rate.click()
             const dialog = sidebar.getByRole("dialog")
             await expect(dialog.getByRole("heading", { name: "API Rate History", exact: true })).toBeVisible()
-            await assertDefaultTokenCacheChart(dialog)
+            await assertDefaultTokenCacheChart(dialog, latestActiveHourStartMs)
             await expect(taskHeaderToggle).toHaveAttribute("aria-label", initialHeaderLabel)
             await waitForRateMetricsRpcCount(recorderPath, 1)
             await captureDialog(dialog, testInfo, "task-statistics-hour-token-cache-line.png")
 
-            const activeHourStarts = seeded.completedAtMs.map((completedAtMs) => Math.floor(completedAtMs / HOUR_MS) * HOUR_MS)
             const secondInputPoint = dialog.locator(
                 `[data-testid^="task-metrics-point-input-"][data-bucket-start-ms="${activeHourStarts[1]}"]`,
             )
@@ -355,7 +357,7 @@ e2e(
             await reopenTaskFromHistory(reopenedApp, sidebar)
             await sidebar.getByTestId("task-rate-metrics").click()
             const reopenedDialog = sidebar.getByRole("dialog")
-            await assertDefaultTokenCacheChart(reopenedDialog)
+            await assertDefaultTokenCacheChart(reopenedDialog, latestActiveHourStartMs)
             await waitForRateMetricsRpcCount(recorderPath, 5)
             expect(server.getMockConsumptions("openai-compatible-responses")).toHaveLength(1)
             await reopenedDialog.getByRole("button", { name: "Close", exact: true }).click()

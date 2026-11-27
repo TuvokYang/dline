@@ -1,5 +1,5 @@
 import { flatMeteredPricing } from "@shared/providers/pricing-shape"
-import { fireEvent, render, screen, within } from "@testing-library/react"
+import { act, fireEvent, render, screen, within } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { UiLanguageProvider } from "@/i18n/UiLanguageProvider"
 import TaskHeader from "./TaskHeader"
@@ -123,6 +123,49 @@ describe("TaskHeader task details", () => {
         const values = within(details).getAllByRole("definition")
         expect(values[0].textContent).toBe("Not available")
         expect(values[1].textContent).toBe(fullText)
+    })
+
+    it("does not open details on pointer-click focus and dismisses an open preview on click", async () => {
+        mocks.expanded = true
+        render(headerTree("en", "canonical-task-123"))
+        const trigger = screen.getByLabelText("Task details")
+
+        fireEvent.pointerDown(trigger)
+        fireEvent.focus(trigger)
+        fireEvent.click(trigger)
+        expect(screen.queryByRole("tooltip")).not.toBeInTheDocument()
+
+        fireEvent.blur(trigger)
+        fireEvent.focus(trigger)
+        await screen.findByRole("tooltip")
+
+        fireEvent.pointerDown(trigger)
+        expect(screen.queryByRole("tooltip")).not.toBeInTheDocument()
+    })
+
+    it("ignores passive pointerEnter without pointer movement so layout shifts do not cover header actions", () => {
+        vi.useFakeTimers()
+        try {
+            mocks.expanded = true
+            render(headerTree("en", "canonical-task-123"))
+            const trigger = screen.getByLabelText("Task details")
+
+            fireEvent.pointerEnter(trigger)
+            act(() => {
+                vi.advanceTimersByTime(1_500)
+            })
+            expect(screen.queryByRole("tooltip")).not.toBeInTheDocument()
+
+            fireEvent.pointerLeave(trigger)
+            fireEvent.pointerEnter(trigger)
+            fireEvent.pointerMove(trigger)
+            act(() => {
+                vi.advanceTimersByTime(1_500)
+            })
+            expect(screen.getByRole("tooltip")).toBeInTheDocument()
+        } finally {
+            vi.useRealTimers()
+        }
     })
 })
 

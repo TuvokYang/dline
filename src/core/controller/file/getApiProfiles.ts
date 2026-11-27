@@ -657,7 +657,8 @@ function resolveRegistryModelInfo(profile: ApiProfile) {
 
 function getProfileModelInfoOverride(profile: ApiProfile) {
     const baseModelInfo = resolveRegistryModelInfo(profile)
-    const configured = !profile.modelId || profile.modelInfo?.id === profile.modelId ? profile.modelInfo : undefined
+    const configured =
+        !profile.modelId || !profile.modelInfo?.id || profile.modelInfo.id === profile.modelId ? profile.modelInfo : undefined
     if (!baseModelInfo) {
         return configured
     }

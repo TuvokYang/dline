@@ -15,7 +15,7 @@ import { readTaskConversationText, readTaskInteractionView } from "@e2e/utils/ta
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
 
 const DLINE_RELOAD_NOTIFICATION =
-    /Dline v\d+\.\d+\.\d+(?:-[^ ]+)? is installed\. Reload VS Code to finish activating the extension\./
+    /Dline(?: \([^)]+\))? v\d+\.\d+\.\d+(?:-[^ ]+)? is installed\. Reload VS Code to finish activating the extension\./
 
 async function selectProfile(frame: Frame, profileName: string, timeout?: number): Promise<void> {
     const modelSwitcher = frame.getByRole("button", { name: "Select model" })

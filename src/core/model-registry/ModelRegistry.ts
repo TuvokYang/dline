@@ -298,8 +298,9 @@ export class ModelRegistry {
     /** Stop the file watcher and clear state. */
     async dispose(): Promise<void> {
         if (this.watcher) {
-            this.watcher.close()
+            const watcher = this.watcher
             this.watcher = null
+            await watcher.close()
         }
         if (this.reloadTimer) {
             clearTimeout(this.reloadTimer)

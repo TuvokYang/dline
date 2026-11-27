@@ -604,13 +604,28 @@ export class TaskCheckpointManager implements ICheckpointManager {
     }
 
     private async persistCheckpointHash(messageIndex: number, references: CheckpointReferenceSet): Promise<void> {
+        const target = this.services.messageStateHandler.clineMessages[messageIndex]
+        if (!target) return
+        const targetTs = target.ts
         await this.services.messageStateHandler.updateClineMessage(messageIndex, {
             lastCheckpointHash: references.hashes,
             checkpointWorkspaceRoots: references.workspaceRoots,
         })
-        await this.services.messageStateHandler.flushMessageUpdate(messageIndex)
-        await this.publishPatchedRow(messageIndex)
+        if (this.disposed) return
+        const resolvedIndex = this.resolveMessageIndex(messageIndex, targetTs)
+        if (resolvedIndex === undefined) return
+        await this.services.messageStateHandler.flushMessageUpdate(resolvedIndex)
+        if (this.disposed) return
+        const publishIndex = this.resolveMessageIndex(resolvedIndex, targetTs)
+        if (publishIndex !== undefined) await this.publishPatchedRow(publishIndex)
         await this.callbacks.postStateToWebview()
+    }
+
+    private resolveMessageIndex(fallbackIndex: number, targetTs: number): number | undefined {
+        const messages = this.services.messageStateHandler.clineMessages
+        if (messages[fallbackIndex]?.ts === targetTs) return fallbackIndex
+        const index = messages.findIndex((message) => message.ts === targetTs)
+        return index === -1 ? undefined : index
     }
 
     /** View delivery only: the hash is already durable, so a failed redraw must not fail the checkpoint. */
@@ -661,24 +676,26 @@ export class TaskCheckpointManager implements ICheckpointManager {
             return
         }
         try {
-            const clineMessages = this.services.messageStateHandler.clineMessages
-            for (const message of clineMessages) {
+            const currentMessages = () => this.services.messageStateHandler.clineMessages
+            for (const message of currentMessages()) {
                 if (message.say === "checkpoint_created") message.isCheckpointCheckedOut = false
             }
             const completionMessageIndex = (): number | undefined => {
+                const messages = currentMessages()
                 const index =
                     completionMessageTs === undefined
-                        ? findLastIndex(clineMessages, (message) => message.say === "completion_result")
-                        : clineMessages.findIndex((message) => message.ts === completionMessageTs)
+                        ? findLastIndex(messages, (message) => message.say === "completion_result")
+                        : messages.findIndex((message) => message.ts === completionMessageTs)
                 return index === -1 ? undefined : index
             }
 
             // By its ts when known: the completion's dialog takes the row over
             // while this runs and clears its `say`.
+            const initialMessages = currentMessages()
             const lastCompletionResultMessage =
                 completionMessageTs === undefined
-                    ? findLast(clineMessages.slice(-3), (m) => m.say === "completion_result")
-                    : clineMessages.find((m) => m.ts === completionMessageTs)
+                    ? findLast(initialMessages.slice(-3), (m) => m.say === "completion_result")
+                    : initialMessages.find((m) => m.ts === completionMessageTs)
             const existingReferences = lastCompletionResultMessage && readCheckpointReferenceSet(lastCompletionResultMessage)
             if (existingReferences && hasFileCheckpoint(existingReferences)) {
                 Logger.log("Completion checkpoint already exists, skipping duplicate checkpoint creation")
@@ -688,6 +705,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
 
             // Through the gate, so later rounds reuse these references instead of committing again.
             const checkpointReferences = await this.gate.commitFiles()
+            if (this.disposed) return
             const targetMessageIndex = completionMessageIndex()
             if (checkpointReferences && targetMessageIndex !== undefined) {
                 await this.persistCheckpointHash(targetMessageIndex, checkpointReferences)
@@ -696,7 +714,8 @@ export class TaskCheckpointManager implements ICheckpointManager {
                     `[TaskCheckpointManager] No file checkpoint hash for completion message in task ${this.task.taskId}; using chat checkpoint only`,
                 )
             }
-            await this.captureCanonicalCheckpoint(targetMessageIndex, checkpointReferences)
+            if (this.disposed) return
+            await this.captureCanonicalCheckpoint(completionMessageIndex(), checkpointReferences)
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "Unknown error"
             Logger.error(`[TaskCheckpointManager] Failed to save checkpoint for task ${this.task.taskId}:`, errorMessage)

@@ -117,8 +117,9 @@ async function onlyTaskId(dlineDocsDir: string): Promise<string> {
 
 e2e(
     "API rate history answers an hour and a day window far larger than one page within the RPC budget",
-    async ({ sidebar, server, dlineDocsDir, userDataDir }) => {
+    async ({ helper, sidebar, server, dlineDocsDir, userDataDir }) => {
         e2e.setTimeout(300_000)
+        await helper.signin(sidebar)
         const marks: Array<[string, number]> = []
         let lastMarkMs = Date.now()
         const mark = (label: string): void => {
